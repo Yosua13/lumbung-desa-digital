@@ -1,51 +1,108 @@
-# 🌾 Lumbung Desa Digital
+# Lumbung Desa Digital - Warung Supplier Credit
 
-**Lumbung Desa Digital** adalah platform *Peer-to-Peer (P2P) Micro-lending* berbasis komunitas (RT/RW, Desa, atau Paguyuban) yang mengadaptasi kearifan lokal "Gotong Royong". Dibangun di atas jaringan **Stellar** dan *smart contract* **Soroban**, platform ini menyediakan fasilitas pinjaman **tanpa bunga (zero-interest)** yang aman, transparan, dan bebas dari jerat pinjaman online (pinjol) ilegal.
-
-## ⚠️ Latar Belakang Masalah
-Di Indonesia, masyarakat menengah ke bawah sering kesulitan mendapatkan akses kredit perbankan (unbanked/underbanked). Ketika terjadi keadaan darurat, mereka terpaksa beralih ke rentenir atau "pinjol ilegal" dengan bunga mencekik. 
-Sistem kas warga/arisan konvensional berbasis uang tunai rentan terhadap kehilangan, ketidaksesuaian pencatatan, dan risiko uang dibawa kabur oleh pengurus.
-
-## 💡 Solusi Kami
-Menggabungkan kearifan lokal dengan keamanan Web3:
-1. **Zero-Interest Lending:** Warga meminjam dana dari kas bersama (lumbung) dan mengembalikan jumlah yang persis sama. Tidak ada bunga.
-2. **Kader Digital (Gatekeeper):** Penggunaan antarmuka diwakili/dibantu oleh anak muda pengurus desa yang melek teknologi, menjembatani *gap* literasi Web3.
-3. **Smart Contract Soroban:** Dana kas dikunci di *blockchain* Stellar. Pencairan pinjaman harus divalidasi oleh *smart contract* dan disetujui oleh Kader Digital, menghilangkan risiko penipuan/penggelapan dana.
-
-## 🛠 Tech Stack
-* **Smart Contract:** Rust (Soroban)
-* **Jaringan:** Stellar Testnet
-* **Frontend:** Vanilla HTML, CSS, JavaScript (ES Modules)
-* **Wallet Connection:** Freighter Wallet (`@stellar/freighter-api`)
-* **Blockchain Interaction:** Stellar SDK (`@stellar/stellar-sdk`)
+An invoice-based supplier financing platform for small warungs built on the **Stellar Testnet** using **Soroban smart contracts**, a **Golang REST API**, and a **React + TypeScript frontend**.
 
 ---
 
-## 📊 Diagram Arsitektur & Alur Pengguna
+## 📁 Project Structure
+```text
+lumbung-desa-digital/
+│
+├── apps/
+│   ├── web/                         # Frontend React + Vite + TS (Teal Fintech UI)
+│   └── api/                         # Backend Golang Clean REST API
+│
+├── contracts/
+│   └── warung_supplier_credit/       # Soroban Smart Contract in Rust
+│
+├── packages/
+│   ├── shared-types/                 # Shared TypeScript interface definitions
+│   └── contract-bindings/            # Generated typescript contract bindings
+│
+├── docs/
+│   ├── architecture.md               # Visual flow and technical layout
+│   ├── api-spec.md                   # REST API routes and endpoints schema
+│   ├── smart-contract-spec.md        # On-chain structs and functions specs
+│   └── demo-flow.md                  # Step-by-step hackathon script
+│
+├── scripts/
+│   ├── build-contract.ps1            # PowerShell contract compiler
+│   ├── deploy-testnet.ps1            # PowerShell contract deployer
+│   ├── seed-demo-data.ps1            # Local DB seeding description
+│   └── simulate-flow.ps1             # E2E PowerShell automation simulation
+│
+├── .env.example                      # Environment variables configurations
+├── README.md                         # This setup guide
+└── Makefile                          # Development shortcuts manager
+```
 
-Berikut adalah diagram sederhana bagaimana warga, Kader Digital, dan *smart contract* berinteraksi di dalam ekosistem Lumbung Desa:
+---
 
-```mermaid
-sequenceDiagram
-    actor Warga as Warga (Peminjam/Penabung)
-    actor Kader as Kader Digital (Admin)
-    participant UI as Frontend (Lumbung App)
-    participant Wallet as Freighter Wallet
-    participant Contract as Soroban Contract
+## 🛠️ Requirements & Setup
 
-    %% Alur Menabung / Deposit
-    Warga->>UI: Serahkan dana ke Kader / Input Nominal
-    UI->>Wallet: Request Sign Transaction (Menabung)
-    Wallet-->>Warga: Prompt Approval
-    Warga->>Wallet: Klik "Approve"
-    Wallet->>Contract: Simpan dana (USDC/XLM) ke Kas Lumbung
-    Contract-->>UI: Return Tx Hash (Sukses)
-    UI-->>Warga: Tampilkan Saldo Terkini
+Ensure the following tools are installed on your local development machine:
+1. **Go** (version 1.20+)
+2. **Node.js** (version 18+ & npm)
+3. **Rust** & Cargo (with `wasm32-unknown-unknown` target configured)
+4. **PostgreSQL** running locally
+5. **Stellar CLI** (optional, for direct deployment from system)
 
-    %% Alur Peminjaman
-    Warga->>UI: Ajukan Pinjaman Darurat
-    UI->>Contract: Rekam Pengajuan Pinjaman
-    Kader->>UI: Review Pengajuan Warga
-    UI->>Wallet: Request Sign (Persetujuan Admin)
-    Wallet->>Contract: Validasi Auth Admin & Cairkan Dana
-    Contract-->>UI: Dana masuk ke dompet Warga
+### 1. Database Setup
+Create a local database named `lumbung_desa`:
+```sql
+CREATE DATABASE lumbung_desa;
+```
+Configure your credentials in the `.env` file (copied from `.env.example` in the root):
+```bash
+cp .env.example .env
+```
+Update the `DATABASE_URL` in the `.env` file:
+```text
+DATABASE_URL=postgres://your_user:your_password@localhost:5432/lumbung_desa?sslmode=disable
+```
+
+---
+
+## 🚀 Running the Project
+
+You can manage the execution of all components using the `Makefile` shortcuts.
+
+### Compile Smart Contract
+```bash
+make build
+```
+*Compiles the Rust smart contract into WebAssembly (`.wasm`) and builds the Go server binary.*
+
+### Launch Backend API Server
+```bash
+make run-backend
+```
+*Starts the Golang API. On startup, the server automatically runs database migrations and seeds the catalog products, demo user profiles, and active invoices.*
+
+### Launch React Frontend
+```bash
+make run-frontend
+```
+*Launches the Vite Dev Server. Open `http://localhost:5173` on your browser to view the app.*
+
+---
+
+## 🤖 Running the End-to-End Simulation
+
+We have created an automated workflow simulation script that executes the complete business logic via the REST API step-by-step (connects wallets, creates a credit request, supplier approves, funder escrows, supplier ships, warung receives, and warung pays).
+
+To trigger the automated simulation:
+```bash
+make simulate
+```
+*This script will output colored log messages for each step, and verify the reputation score and credit limits update successfully!*
+
+---
+
+## 📦 How the Blockchain Integration Works
+1. **Off-Chain State**: Main product, request, and repayment transactions are managed in a PostgreSQL database.
+2. **On-Chain Escrow**: Funds are locked in the `warung_supplier_credit` smart contract on **Stellar Testnet** using the Freighter Wallet.
+3. **Double Signature Pattern**:
+   - The Go backend constructs the unsigned transaction payload in XDR format.
+   - The React frontend requests signature authorization via the **Freighter Wallet Extension**.
+   - The signed XDR is returned to the backend, which submits it to Stellar RPC and logs the transaction hashes into database records.
