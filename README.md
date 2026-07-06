@@ -4,6 +4,25 @@ An invoice-based supplier financing platform for small warungs built on the **St
 
 ---
 
+## 📖 Tentang Aplikasi (About the Application)
+
+**Lumbung Desa Digital** adalah sebuah platform pembiayaan rantai pasok (*supply chain financing*) berbasis *invoice* yang dirancang khusus untuk membantu warung-warung kecil (UMKM) dalam mengelola permodalan dan pengadaan stok barang. 
+
+Aplikasi ini menjembatani tiga pihak utama:
+- **Warung (Pengecer)**: Dapat mengajukan kredit untuk membeli stok barang dari supplier tanpa harus membayar penuh di muka. Limit plafon ditentukan oleh skor reputasi mereka.
+- **Supplier (Pemasok)**: Menerima pesanan, menyetujui, dan mengirimkan barang.
+- **Funder (Pendana)**: Mengunci dana ke dalam *escrow* (*smart contract*) untuk mendanai transaksi tersebut sehingga aman bagi semua pihak.
+
+**Fitur Utama:**
+- 🛒 **Pengajuan Kredit Stok**: Warung dapat memesan barang dari supplier dengan sistem pembayaran tempo.
+- 🔗 **Blockchain Escrow**: Dana transaksi dikunci menggunakan *smart contract* Soroban di jaringan **Stellar Testnet** sehingga transparan dan aman.
+- 📈 **Sistem Reputasi**: Warung memiliki skor kredit (Reputation Score) yang akan meningkat setiap kali mereka melunasi cicilan tepat waktu. Semakin tinggi skor, semakin besar plafon kredit yang didapatkan.
+- 💳 **Pembayaran Fleksibel**: Warung dapat membayar tagihan (*invoice*) secara cicilan setelah barang diterima, dan dana otomatis dicairkan ke pihak terkait secara *on-chain*.
+
+Aplikasi ini mendemonstrasikan integrasi *off-chain* (PostgreSQL + Golang) untuk kelancaran *user experience* dan *on-chain* (Stellar/Soroban) untuk keamanan dana serta pencatatan riwayat transaksi secara terdesentralisasi.
+
+---
+
 ## 📁 Project Structure
 ```text
 lumbung-desa-digital/
