@@ -87,7 +87,8 @@ export type InvoiceStatus =
   | "REPAYMENT_ACTIVE"
   | "COMPLETED"
   | "OVERDUE"
-  | "DISPUTE";
+  | "DISPUTE"
+  | "REJECTED";
 
 export interface Invoice {
   id: string;
@@ -227,9 +228,26 @@ export interface StellarTransaction {
   business_reference_id: string;
   network: "TESTNET" | "MAINNET";
   tx_hash: string;
-  status: "PENDING" | "SUCCESS" | "FAILED";
+  status: "PENDING" | "SUCCESS" | "FAILED" | "PENDING_RETRY";
   ledger_sequence: number;
   submitted_at: string;
+  operation?: "LOCK_FUNDING" | "RELEASE_ESCROW" | "REFUND_ESCROW" | "POST_REPAYMENT" | "TOPUP_POOL" | "WITHDRAW" | "SIMULATED_EVENT";
+  contract_id?: string;
+  explorer_url?: string;
+  idempotency_key?: string;
+  is_live?: boolean;
+}
+
+export interface SorobanContractEvent {
+  id: string;
+  stellar_transaction_id: string;
+  contract_id: string;
+  event_name: "FundLocked" | "InvoiceReleased" | "PayoutRequested" | "RepaymentPosted" | "InvoiceCompleted" | "DisputeRaised";
+  business_reference_type: "INVOICE" | "PAYOUT" | "REPAYMENT" | "TOPUP" | "WITHDRAWAL";
+  business_reference_id: string;
+  payload_json: string;
+  ledger_sequence: number;
+  emitted_at: string;
 }
 
 export interface AuditLog {
