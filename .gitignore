@@ -2,6 +2,11 @@ node_modules/
 build/
 dist/
 coverage/
+tmp/
+contracts/target/
+packages/*/node_modules/
+packages/*/dist/
+.env.stellar.local
 .DS_Store
 *.log
 .env*
