@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 import { RoleCode, Party, WarungProfile, SupplierProfile, Product, Invoice, InvoiceItem, CooperativePool, PoolContribution, RepaymentSchedule, Payout, LedgerAccount, StellarTransaction, AuditLog, CartItem } from "./types";
 import {
   initialParties,
@@ -19,21 +19,38 @@ import {
   initialStellarTransactions,
   initialAuditLogs
 } from "./data";
-import { generateId, generateStellarTxHash, formatRupiah } from "./utils";
+import { generateId } from "./utils";
 import { Landmark } from "lucide-react";
+import { calculateInvoiceQuote, calculateSupplierFee, createFlexibleRepaymentSchedules } from "./domain/finance";
+import { createLockFundingJournal, createRepaymentJournal, validateBalancedJournal } from "./domain/ledger";
+import { requireInvoiceTransition } from "./domain/invoiceWorkflow";
+import { useStellarWallet } from "./hooks/useStellarWallet";
+import { createStellarTransactionRecord, StellarTransactionInput } from "./web3/stellar";
 
-// Components
-import RoleSelector from "./components/RoleSelector";
-import Header from "./components/Header";
-import WarungDashboard from "./components/WarungDashboard";
-import SupplierDashboard from "./components/SupplierDashboard";
-import KoperasiDashboard from "./components/KoperasiDashboard";
-import InvestorDashboard from "./components/InvestorDashboard";
-import AdminDashboard from "./components/AdminDashboard";
-import LandingPage from "./components/LandingPage";
-import Sidebar from "./components/Sidebar";
+import WalletConnectionBar from "./components/WalletConnectionBar";
+
+const RoleSelector = lazy(() => import("./components/RoleSelector"));
+const WarungDashboard = lazy(() => import("./components/WarungDashboard"));
+const SupplierDashboard = lazy(() => import("./components/SupplierDashboard"));
+const KoperasiDashboard = lazy(() => import("./components/KoperasiDashboard"));
+const InvestorDashboard = lazy(() => import("./components/InvestorDashboard"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard"));
+const LandingPage = lazy(() => import("./components/LandingPage"));
+const Sidebar = lazy(() => import("./components/Sidebar"));
+
+function AppLoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#07080A] text-[#E0E0E0]">
+      <div className="rounded-xl border border-[#1F2127] bg-[#0F1115] px-5 py-4 text-xs font-bold uppercase tracking-widest text-gray-400 font-mono">
+        Memuat WSC Platform...
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
+  const stellarWallet = useStellarWallet();
+
   // Authentication & Role Status
   const [showLanding, setShowLanding] = useState(true);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -126,30 +143,42 @@ export default function App() {
     setAuditLogs(prev => [log, ...prev]);
   };
 
-  // Helper to post a new Stellar Transaction
-  const postStellarTx = (refType: "INVOICE" | "PAYOUT" | "REPAYMENT" | "TOPUP" | "WITHDRAWAL", refId: string): string => {
-    const hash = generateStellarTxHash();
-    const sequence = Math.floor(1300000 + Math.random() * 50000);
-    const tx: StellarTransaction = {
-      id: generateId("ST"),
-      business_reference_type: refType,
-      business_reference_id: refId,
-      network: "TESTNET",
-      tx_hash: hash,
-      status: "SUCCESS",
-      ledger_sequence: sequence,
-      submitted_at: new Date().toISOString()
-    };
-    
+  // Helper to post a Stellar/Soroban transaction record.
+  // In demo mode this creates a deterministic-looking testnet record; live mode can replace it with a signed Freighter result.
+  const postStellarTx = (
+    refType: "INVOICE" | "PAYOUT" | "REPAYMENT" | "TOPUP" | "WITHDRAWAL",
+    refId: string,
+    operation: StellarTransactionInput["operation"] = "SIMULATED_EVENT"
+  ): string => {
+    const tx = createStellarTransactionRecord({
+      referenceType: refType,
+      referenceId: refId,
+      operation,
+      idempotencyKey: `${refType}:${refId}:${operation}`
+    });
+
     setStellarTransactions(prev => [tx, ...prev]);
-    return hash;
+    return tx.tx_hash;
   };
 
   // 1. ACTION: Create a new Invoice from Warung checkout
   const handleCreateInvoice = (supplierId: string, items: CartItem[], dp: number, tenor: number) => {
-    const totalAmount = items.reduce((sum, item) => sum + (item.product.unit_price * item.qty), 0);
-    const fundingAmount = totalAmount - dp;
-    const adminFee = Math.round(fundingAmount * 0.03); // 3% flat platform fee loaded to warung
+    const quote = calculateInvoiceQuote(items, dp);
+
+    if (items.length === 0 || quote.totalAmount <= 0) {
+      alert("Keranjang belum valid untuk diajukan sebagai invoice.");
+      return;
+    }
+
+    if (quote.fundingAmount <= 0) {
+      alert("Nilai pembiayaan harus lebih besar dari nol setelah DP.");
+      return;
+    }
+
+    if (quote.fundingAmount > activeWarungProfile.available_limit) {
+      alert("Nilai pembiayaan melebihi limit tersedia warung.");
+      return;
+    }
 
     const newInvoice: Invoice = {
       id: generateId("INV"),
@@ -157,10 +186,10 @@ export default function App() {
       warung_id: activePartyId,
       supplier_id: supplierId,
       cooperative_id: "party-coop-01",
-      total_amount: totalAmount,
-      down_payment_amount: dp,
-      funding_amount: fundingAmount,
-      warung_fee_amount: adminFee,
+      total_amount: quote.totalAmount,
+      down_payment_amount: quote.downPaymentAmount,
+      funding_amount: quote.fundingAmount,
+      warung_fee_amount: quote.warungFeeAmount,
       due_date: new Date(Date.now() + tenor * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
       tenor_days: tenor,
       status: "SUBMITTED",
@@ -184,7 +213,7 @@ export default function App() {
       if (p.party_id === activePartyId) {
         return {
           ...p,
-          available_limit: Math.max(0, p.available_limit - fundingAmount)
+          available_limit: Math.max(0, p.available_limit - quote.fundingAmount)
         };
       }
       return p;
@@ -197,21 +226,22 @@ export default function App() {
     // Ledger posting adjustment: Increase outstanding receivables
     setLedgerAccounts(prev => prev.map(acc => {
       if (acc.account_no === "12100") { // receivables asset
-        return { ...acc, available_balance: acc.available_balance + fundingAmount };
+        return { ...acc, available_balance: acc.available_balance + quote.fundingAmount };
       }
       return acc;
     }));
 
     // Logs
     postAuditLog("CREATE_INVOICE_FINANCING", "INVOICE", newInvoice.id, {}, newInvoice);
-    postStellarTx("INVOICE", newInvoice.id);
+    postStellarTx("INVOICE", newInvoice.id, "SIMULATED_EVENT");
   };
 
   // 2. ACTION: Supplier approves the invoice
   const handleApproveInvoice = (invoiceId: string) => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
-        const updated = { ...inv, status: "COOP_REVIEW" as const, row_version: inv.row_version + 1 };
+        requireInvoiceTransition(inv.status, "SUPPLIER_APPROVED");
+        const updated = { ...inv, status: "SUPPLIER_APPROVED" as const, row_version: inv.row_version + 1 };
         postAuditLog("SUPPLIER_APPROVE_ORDER", "INVOICE", invoiceId, inv, updated);
         return updated;
       }
@@ -252,6 +282,17 @@ export default function App() {
   const handleApproveFunding = (invoiceId: string) => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
+        if (!["SUPPLIER_APPROVED", "COOP_REVIEW"].includes(inv.status)) {
+          alert("Invoice belum siap didanai. Supplier harus menyetujui pesanan terlebih dahulu.");
+          return inv;
+        }
+
+        if (pool.available_amount < inv.funding_amount) {
+          alert("Saldo pool koperasi tidak cukup untuk mengunci dana invoice ini.");
+          return inv;
+        }
+
+        validateBalancedJournal(createLockFundingJournal(invoiceId, inv.funding_amount));
         const updated = { ...inv, status: "ESCROW_LOCKED" as const, row_version: inv.row_version + 1 };
         
         // Lock Koperasi pool funds
@@ -274,7 +315,7 @@ export default function App() {
         }));
 
         postAuditLog("KOPERASI_APPROVE_FUNDING", "INVOICE", invoiceId, inv, updated);
-        postStellarTx("INVOICE", invoiceId); // smart contract "FundLocked" event triggers
+        postStellarTx("INVOICE", invoiceId, "LOCK_FUNDING"); // smart contract "FundLocked" event trigger
         return updated;
       }
       return inv;
@@ -315,6 +356,11 @@ export default function App() {
     const proofUrl = "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=300&q=80"; // Unsplash delivery truck
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
+        if (inv.status !== "ESCROW_LOCKED") {
+          alert("Supplier hanya dapat mengirim setelah dana invoice terkunci di escrow.");
+          return inv;
+        }
+
         const updated = {
           ...inv,
           status: "SHIPPED" as const,
@@ -333,13 +379,32 @@ export default function App() {
   const handleConfirmReceipt = (invoiceId: string) => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
-        const updated = { ...inv, status: "PAYOUT_PROCESSING" as const, row_version: inv.row_version + 1 };
+        if (inv.status !== "SHIPPED" && inv.status !== "ESCROW_LOCKED") {
+          alert("Barang belum berada pada status yang dapat dikonfirmasi diterima.");
+          return inv;
+        }
+
+        const updated = { ...inv, status: "RECEIVED_CONFIRMED" as const, row_version: inv.row_version + 1 };
         
         postAuditLog("WARUNG_CONFIRM_RECEIPT", "INVOICE", invoiceId, inv, updated);
         
-        // Trigger simulated delayed payout worker (1.5 seconds)
         setTimeout(() => {
-          triggerPayoutWorker(invoiceId, inv.funding_amount, inv.supplier_id);
+          setInvoices(currentInvoices => currentInvoices.map(currentInv => {
+            if (currentInv.id === invoiceId && currentInv.status === "RECEIVED_CONFIRMED") {
+              const payoutProcessing = {
+                ...currentInv,
+                status: "PAYOUT_PROCESSING" as const,
+                row_version: currentInv.row_version + 1
+              };
+              postAuditLog("START_SUPPLIER_AUTO_CASHOUT", "INVOICE", invoiceId, currentInv, payoutProcessing);
+              return payoutProcessing;
+            }
+            return currentInv;
+          }));
+
+          setTimeout(() => {
+            triggerPayoutWorker(invoiceId, inv.funding_amount, inv.supplier_id);
+          }, 900);
         }, 1500);
 
         return updated;
@@ -350,8 +415,8 @@ export default function App() {
 
   // Logic Background worker payout (auto-cashout Rupiah)
   const triggerPayoutWorker = (invoiceId: string, grossAmount: number, supplierId: string) => {
-    const feeRate = supplierId === "party-supplier-01" ? 0.01 : supplierId === "party-supplier-02" ? 0.012 : 0.015;
-    const feeAmount = Math.round(grossAmount * feeRate);
+    const supplierFeeRate = supplierProfiles.find(profile => profile.party_id === supplierId)?.supplier_fee_rate || 0.015;
+    const feeAmount = calculateSupplierFee(grossAmount, supplierFeeRate);
     const netAmount = grossAmount - feeAmount;
 
     const newPayout: Payout = {
@@ -398,41 +463,10 @@ export default function App() {
       return acc;
     }));
 
-    // Create flexible repayment schedule records for Warung (PRD)
-    // 3 installments over tenor
+    // Create flexible repayment schedule records for Warung (PRD/SRS).
     const invData = invoices.find(i => i.id === invoiceId);
     const totalFinancing = invData ? invData.funding_amount + invData.warung_fee_amount : grossAmount;
-    const instAmt = Math.round(totalFinancing / 3);
-
-    const schedules: RepaymentSchedule[] = [
-      {
-        id: generateId("SCHED"),
-        invoice_id: invoiceId,
-        sequence_no: 1,
-        due_date: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
-        amount_due: instAmt,
-        amount_paid: 0,
-        status: "PENDING"
-      },
-      {
-        id: generateId("SCHED"),
-        invoice_id: invoiceId,
-        sequence_no: 2,
-        due_date: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
-        amount_due: instAmt,
-        amount_paid: 0,
-        status: "PENDING"
-      },
-      {
-        id: generateId("SCHED"),
-        invoice_id: invoiceId,
-        sequence_no: 3,
-        due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
-        amount_due: instAmt,
-        amount_paid: 0,
-        status: "PENDING"
-      }
-    ];
+    const schedules = createFlexibleRepaymentSchedules(invoiceId, totalFinancing, invData?.tenor_days || 30);
 
     setRepaymentSchedules(prev => [...schedules, ...prev]);
 
@@ -450,17 +484,20 @@ export default function App() {
 
     // Logs and Stellar ledger transactions
     postAuditLog("SETTLE_PAYOUT_AUTO", "PAYOUT", newPayout.id, {}, newPayout);
-    postStellarTx("PAYOUT", newPayout.id);
+    postStellarTx("PAYOUT", newPayout.id, "RELEASE_ESCROW");
   };
 
   // 8. ACTION: Warung pays an installment
   const handlePayInstallment = (scheduleId: string) => {
     setRepaymentSchedules(prev => prev.map(sch => {
       if (sch.id === scheduleId) {
+        if (sch.status === "PAID") return sch;
+
+        validateBalancedJournal(createRepaymentJournal(scheduleId, sch.amount_due));
         const updated = { ...sch, status: "PAID" as const, amount_paid: sch.amount_due };
         
         postAuditLog("PAY_INSTALLMENT", "REPAYMENT_SCHEDULE", scheduleId, sch, updated);
-        postStellarTx("REPAYMENT", scheduleId);
+        postStellarTx("REPAYMENT", scheduleId, "POST_REPAYMENT");
 
         // Update Pool available cash balance (Repayment received)
         setPool(prevPool => ({
@@ -634,6 +671,7 @@ export default function App() {
           }));
 
           postAuditLog("RESOLVE_DISPUTE_REFUND", "INVOICE", invoiceId, inv, updated);
+          postStellarTx("INVOICE", invoiceId, "REFUND_ESCROW");
           return updated;
         }
       }
@@ -643,11 +681,10 @@ export default function App() {
 
   // 11. ACTION: Background Overdue Scan Scheduler simulation (Koperasi)
   const handleTriggerOverdueScan = () => {
+    const today = new Date().toISOString().substring(0, 10);
     setRepaymentSchedules(prevSchedules => {
       return prevSchedules.map(sch => {
-        if (sch.status === "PENDING") {
-          // older scheduled, force-set sched-05 to overdue for visual simulation demo
-          if (sch.id === "sched-05") {
+        if (sch.status === "PENDING" && sch.due_date < today) {
             const updated = { ...sch, status: "OVERDUE" as const };
             postAuditLog("DETECTOR_OVERDUE_SCHED", "REPAYMENT_SCHEDULE", sch.id, sch, updated);
 
@@ -671,7 +708,6 @@ export default function App() {
             }));
 
             return updated;
-          }
         }
         return sch;
       });
@@ -710,7 +746,7 @@ export default function App() {
     }));
 
     postAuditLog("DEPOSIT_INVESTOR_FUNDS", "POOL_CONTRIBUTION", updatedContrib.id, {}, updatedContrib);
-    postStellarTx("TOPUP", updatedContrib.id);
+    postStellarTx("TOPUP", updatedContrib.id, "TOPUP_POOL");
   };
 
   // 13. ACTION: Investor withdraws available yield
@@ -742,7 +778,7 @@ export default function App() {
 
     const wdrId = generateId("WDR");
     postAuditLog("WITHDRAW_INVESTOR_YIELD", "WITHDRAWAL", wdrId, { amount }, { amount, netAmount, fee });
-    postStellarTx("WITHDRAWAL", wdrId);
+    postStellarTx("WITHDRAWAL", wdrId, "WITHDRAW");
   };
 
   // 14. ACTION: Supplier adds new Product to Catalog
@@ -914,11 +950,16 @@ export default function App() {
   const currentWalletBalance = walletBalances[activePartyId] || 0;
 
   if (showLanding) {
-    return <LandingPage onSignIn={() => setShowLanding(false)} />;
+    return (
+      <Suspense fallback={<AppLoadingFallback />}>
+        <LandingPage onSignIn={() => setShowLanding(false)} />
+      </Suspense>
+    );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#07080A] text-[#E0E0E0]">
+    <Suspense fallback={<AppLoadingFallback />}>
+      <div className="min-h-screen flex flex-col bg-[#07080A] text-[#E0E0E0]">
       {loggedIn ? (
         <div className="flex-grow flex flex-col md:flex-row bg-[#0A0B0D] text-[#E0E0E0] font-sans">
           
@@ -943,6 +984,15 @@ export default function App() {
 
           {/* Main Dashboard Layout Area */}
           <div className="flex-grow flex flex-col min-w-0">
+            <WalletConnectionBar
+              wallet={stellarWallet.wallet}
+              loading={stellarWallet.loading}
+              connected={stellarWallet.connected}
+              networkMatches={stellarWallet.networkMatches}
+              onConnect={stellarWallet.connect}
+              onDisconnect={stellarWallet.disconnect}
+              onRefresh={stellarWallet.refresh}
+            />
             
             {/* Sub-header / Top Alert bar inside Main Dashboard */}
             <div className="bg-[#0F1115] border-b border-[#1F2127] px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1106,6 +1156,7 @@ export default function App() {
           </footer>
         </div>
       )}
-    </div>
+      </div>
+    </Suspense>
   );
 }

@@ -74,8 +74,8 @@ export default function KoperasiDashboard({
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
   // Filter invoices for approval (Submitted to supplier, or approved by supplier)
-  // Usually, once supplier approves, it enters COOP_REVIEW
-  const pendingInvoices = invoices.filter(inv => ["SUBMITTED", "SUPPLIER_APPROVED", "COOP_REVIEW"].includes(inv.status));
+  // Koperasi can only approve funding after supplier has accepted the order.
+  const pendingInvoices = invoices.filter(inv => ["SUPPLIER_APPROVED", "COOP_REVIEW"].includes(inv.status));
 
   // Filter active escrow invoices
   const activeEscrows = invoices.filter(inv => ["ESCROW_LOCKED", "SHIPPED", "RECEIVED_CONFIRMED"].includes(inv.status));

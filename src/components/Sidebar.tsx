@@ -66,7 +66,7 @@ export default function Sidebar({
   const getMenuItems = () => {
     const myInvoices = invoices.filter(inv => activeParty && inv.supplier_id === activeParty.id);
     const warungInvoices = invoices.filter(inv => activeParty && inv.warung_id === activeParty.id);
-    const pendingInvoices = invoices.filter(inv => ["SUBMITTED", "SUPPLIER_APPROVED", "COOP_REVIEW"].includes(inv.status));
+    const pendingInvoices = invoices.filter(inv => ["SUPPLIER_APPROVED", "COOP_REVIEW"].includes(inv.status));
     const disputeInvoices = invoices.filter(inv => inv.status === "DISPUTE");
 
     switch (currentRole) {

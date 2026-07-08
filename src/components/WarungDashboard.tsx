@@ -208,7 +208,8 @@ export default function WarungDashboard({
       REPAYMENT_ACTIVE: { label: "Cicilan Aktif", style: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
       COMPLETED: { label: "Lunas", style: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
       OVERDUE: { label: "Overdue (Tunggakan)", style: "bg-red-500/10 text-red-400 border-red-500/20" },
-      DISPUTE: { label: "Dispute (Bermasalah)", style: "bg-orange-500/10 text-orange-400 border-orange-500/20" }
+      DISPUTE: { label: "Dispute (Bermasalah)", style: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
+      REJECTED: { label: "Ditolak / Refund", style: "bg-red-500/10 text-red-400 border-red-500/20" }
     };
     const info = maps[status] || { label: status, style: "bg-gray-500/10 text-gray-400 border-gray-500/20" };
     return <span className={`px-2.5 py-1 text-xs font-semibold rounded border ${info.style}`}>{info.label}</span>;

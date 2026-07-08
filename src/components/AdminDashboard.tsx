@@ -22,7 +22,8 @@ import {
   Lock,
   FileSpreadsheet,
   AlertTriangle,
-  Clock
+  Clock,
+  ExternalLink
 } from "lucide-react";
 import {
   RoleCode,
@@ -549,7 +550,7 @@ export default function AdminDashboard({
             {/* Stellar Tx logs */}
             <div className="bg-[#0F1115] rounded-2xl border border-[#262626] shadow-sm overflow-hidden">
               <div className="p-5 border-b border-[#262626] bg-[#14161C] font-bold text-white text-sm">
-                Blockchain Ledger Explorer (Simulated Logs)
+                Blockchain Ledger Explorer
               </div>
 
               <div className="overflow-x-auto text-[11px]">
@@ -559,6 +560,7 @@ export default function AdminDashboard({
                       <th className="p-4">Tanggal Ledger</th>
                       <th className="p-4">Tx Hash (Stellar)</th>
                       <th className="p-4">Tipe Aktivitas</th>
+                      <th className="p-4">Operation</th>
                       <th className="p-4">Ledger Seq</th>
                       <th className="p-4">Jaringan</th>
                       <th className="p-4 text-center">Status Consensus</th>
@@ -568,17 +570,31 @@ export default function AdminDashboard({
                     {stellarTransactions.map(tx => (
                       <tr key={tx.id} className="hover:bg-[#14161C]/50 transition-colors">
                         <td className="p-4 font-sans text-xs">{new Date(tx.submitted_at).toLocaleString("id-ID")}</td>
-                        <td className="p-4 text-indigo-400 break-all select-all text-[10px] max-w-xs">{tx.tx_hash}</td>
+                        <td className="p-4 text-indigo-400 break-all select-all text-[10px] max-w-xs">
+                          <div className="flex items-center gap-2">
+                            <span>{tx.tx_hash}</span>
+                            {tx.explorer_url && (
+                              <a href={tx.explorer_url} target="_blank" rel="noreferrer" className="text-emerald-400 hover:text-white shrink-0" title="Buka di Stellar Expert">
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        </td>
                         <td className="p-4 font-sans text-xs">
                           <span className="bg-[#14161C] text-gray-300 px-1.5 py-0.5 rounded border border-[#262626] uppercase font-semibold text-[9px]">
                             {tx.business_reference_type}
                           </span>
                         </td>
+                        <td className="p-4 text-gray-400">{tx.operation || "SIMULATED_EVENT"}</td>
                         <td className="p-4 font-bold text-gray-400">{tx.ledger_sequence}</td>
                         <td className="p-4 text-gray-400">{tx.network}</td>
                         <td className="p-4 text-center">
-                          <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[9px] font-bold">
-                            SUCCESS_LEDGER_POSTED
+                          <span className={`border px-2 py-0.5 rounded text-[9px] font-bold ${
+                            tx.is_live
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                          }`}>
+                            {tx.is_live ? "LIVE_LEDGER_POSTED" : "SIMULATED_LEDGER_POSTED"}
                           </span>
                         </td>
                       </tr>
