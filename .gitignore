@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# IDE & AI Studio settings
+.vscode/
+.antigravity/
