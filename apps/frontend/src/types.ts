@@ -58,7 +58,7 @@ export interface SupplierProfile {
   settlement_bank_code: string;
   settlement_account_no_encrypted: string; // Advanced encryption visualization
   auto_cashout_enabled: boolean;
-  supplier_fee_rate: number; // e.g. 0.01 (1%)
+  supplier_fee_rate: number; // legacy profile field; active fee calculation uses fixed cost tiers
 }
 
 export interface Product {
@@ -108,7 +108,11 @@ export interface Invoice {
   shipping_resi?: string;
   dispute_reason?: string;
   dispute_proof_url?: string;
+  dispute_proof_urls?: string[];
   dispute_solution?: string;
+  rejection_reason?: string;
+  receipt_note?: string;
+  receipt_proof_urls?: string[];
   created_at: string;
 }
 

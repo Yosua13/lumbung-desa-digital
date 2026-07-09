@@ -327,7 +327,7 @@ export const initialSupplierProfiles: SupplierProfile[] = [
     settlement_bank_code: "BCA",
     settlement_account_no_encrypted: "0245******3928", // visualized secure mask
     auto_cashout_enabled: true,
-    supplier_fee_rate: 0.01 // 1% success fee
+    supplier_fee_rate: 0.01 // legacy reference only; payout uses fixed cost tiers
   },
   {
     party_id: "party-supplier-02",
@@ -336,7 +336,7 @@ export const initialSupplierProfiles: SupplierProfile[] = [
     settlement_bank_code: "Mandiri",
     settlement_account_no_encrypted: "13100******4928",
     auto_cashout_enabled: true,
-    supplier_fee_rate: 0.012 // 1.2% success fee
+    supplier_fee_rate: 0.012 // legacy reference only; payout uses fixed cost tiers
   },
   {
     party_id: "party-supplier-03",
@@ -345,7 +345,7 @@ export const initialSupplierProfiles: SupplierProfile[] = [
     settlement_bank_code: "BNI",
     settlement_account_no_encrypted: "0492******1982",
     auto_cashout_enabled: true,
-    supplier_fee_rate: 0.015 // 1.5% success fee
+    supplier_fee_rate: 0.015 // legacy reference only; payout uses fixed cost tiers
   }
 ];
 
