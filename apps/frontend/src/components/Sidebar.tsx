@@ -94,6 +94,12 @@ export default function Sidebar({
       case RoleCode.SUPPLIER:
         return [
           {
+            id: "dashboard",
+            label: "Dashboard Supplier",
+            icon: BarChart2,
+            badge: null
+          },
+          {
             id: "pesanan",
             label: "Pesanan Masuk",
             icon: ClipboardList,
@@ -114,6 +120,12 @@ export default function Sidebar({
         ];
       case RoleCode.KOPERASI:
         return [
+          {
+            id: "dashboard",
+            label: "Dashboard Koperasi",
+            icon: Coins,
+            badge: null
+          },
           {
             id: "persetujuan",
             label: "Queue Persetujuan",

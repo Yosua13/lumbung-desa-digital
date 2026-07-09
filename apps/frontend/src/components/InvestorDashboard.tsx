@@ -141,6 +141,7 @@ export default function InvestorDashboard({
   return (
     <div className="space-y-6">
       {/* TOP ROW: Portfolio metrics */}
+      {activeTab === "portfolio" && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-[#0F1115] rounded-xl p-5 border border-[#262626] shadow-md flex items-center gap-4">
           <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-lg">
@@ -186,6 +187,7 @@ export default function InvestorDashboard({
           </div>
         </div>
       </div>
+      )}
 
       {/* TABS SWITCHER */}
       {!propActiveTab && (

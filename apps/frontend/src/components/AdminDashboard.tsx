@@ -101,6 +101,7 @@ export default function AdminDashboard({
   return (
     <div className="space-y-6">
       {/* TOP ROW: Admin system health cards */}
+      {activeTab === "metrics" && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-[#0F1115] rounded-xl p-5 border border-[#262626] shadow-md flex items-center gap-4">
           <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-lg">
@@ -146,6 +147,7 @@ export default function AdminDashboard({
           </div>
         </div>
       </div>
+      )}
 
       {/* MID ROW: Section navigation switcher */}
       {!propActiveTab && (
