@@ -34,6 +34,7 @@ import {
   Payout
 } from "../types";
 import { formatRupiah, generateId } from "../utils";
+import { calculateSupplierSuccessFee } from "../domain/finance";
 
 interface SupplierDashboardProps {
   activeParty: Party;
@@ -45,7 +46,7 @@ interface SupplierDashboardProps {
   onAddProduct: (productData: Omit<Product, "id" | "supplier_id" | "is_active">) => void;
   onUpdateStockStatus: (productId: string, status: "AVAILABLE" | "LIMITED" | "OUT_OF_STOCK") => void;
   onApproveInvoice: (invoiceId: string) => void;
-  onRejectInvoice: (invoiceId: string) => void;
+  onRejectInvoice: (invoiceId: string, reason: string) => void;
   onShipInvoice: (invoiceId: string, resi: string) => void;
 }
 
@@ -63,9 +64,9 @@ export default function SupplierDashboard({
   onShipInvoice,
   activeTab: propActiveTab,
   onTabChange
-}: SupplierDashboardProps & { activeTab?: "pesanan" | "katalog" | "payout"; onTabChange?: (tab: "pesanan" | "katalog" | "payout") => void }) {
+}: SupplierDashboardProps & { activeTab?: "dashboard" | "pesanan" | "katalog" | "payout"; onTabChange?: (tab: "dashboard" | "pesanan" | "katalog" | "payout") => void }) {
   // Tabs
-  const [localActiveTab, setLocalActiveTab] = useState<"pesanan" | "katalog" | "payout">("pesanan");
+  const [localActiveTab, setLocalActiveTab] = useState<"dashboard" | "pesanan" | "katalog" | "payout">("dashboard");
   const activeTab = propActiveTab || localActiveTab;
   const setActiveTab = onTabChange || setLocalActiveTab;
 
@@ -80,6 +81,8 @@ export default function SupplierDashboard({
   // Shipping action states
   const [shippingInvoiceId, setShippingInvoiceId] = useState<string | null>(null);
   const [shippingResi, setShippingResi] = useState("");
+  const [rejectingInvoiceId, setRejectingInvoiceId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   // Detailed modal/expand for invoice
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -134,9 +137,22 @@ export default function SupplierDashboard({
     alert("Konfirmasi pengiriman berhasil! Resi pengiriman dicatat dalam Stellar audit log, dan warung telah dinotifikasi.");
   };
 
+  const submitReject = (invoiceId: string) => {
+    if (!rejectReason.trim()) {
+      alert("Alasan penolakan wajib diisi agar Warung bisa memperbaiki pengajuannya.");
+      return;
+    }
+
+    onRejectInvoice(invoiceId, rejectReason.trim());
+    setRejectingInvoiceId(null);
+    setRejectReason("");
+    setSelectedInvoice(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* TOP ROW: Supplier metrics summary cards */}
+      {activeTab === "dashboard" && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-[#0F1115] rounded-xl p-5 border border-[#262626] shadow-md flex items-center gap-4">
           <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-lg">
@@ -178,14 +194,24 @@ export default function SupplierDashboard({
           <div>
             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wide font-mono">Success Fee Potong</div>
             <div className="text-lg font-extrabold text-white mt-0.5 font-mono">{formatRupiah(totalSuccessFees)}</div>
-            <p className="text-[9px] text-gray-400 mt-0.5 font-mono">Success Fee Platform ({Math.round(supplierProfile.supplier_fee_rate * 1000) / 10}%)</p>
+            <p className="text-[9px] text-gray-400 mt-0.5 font-mono">Fixed cost bertingkat per nilai pesanan</p>
           </div>
         </div>
       </div>
+      )}
 
       {/* MID ROW: Dashboard and Action selector tabs */}
       {!propActiveTab && (
         <div className="flex border border-[#262626] bg-[#0F1115] p-1 rounded-xl shadow-md">
+          <button
+            onClick={() => { setActiveTab("dashboard"); setSelectedInvoice(null); }}
+            className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+              activeTab === "dashboard" ? "bg-[#1A1D23] text-emerald-400 border border-emerald-500/20" : "text-gray-400 hover:text-white hover:bg-[#14161C]"
+            }`}
+          >
+            <TrendingUp className="w-4.5 h-4.5" />
+            <span>Dashboard</span>
+          </button>
           <button
             onClick={() => { setActiveTab("pesanan"); setSelectedInvoice(null); }}
             className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
@@ -223,6 +249,44 @@ export default function SupplierDashboard({
 
       {/* BOTTOM HUB: Tab contents */}
       <AnimatePresence mode="wait">
+        {activeTab === "dashboard" && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+          >
+            <div className="bg-[#0F1115] rounded-2xl border border-[#262626] p-5">
+              <h3 className="font-extrabold text-white text-sm mb-3">Pesanan Butuh Aksi</h3>
+              <div className="space-y-2">
+                {myInvoices.filter(inv => ["SUBMITTED", "ESCROW_LOCKED"].includes(inv.status)).slice(0, 5).map(inv => (
+                  <button
+                    key={inv.id}
+                    onClick={() => { setActiveTab("pesanan"); setSelectedInvoice(inv); }}
+                    className="w-full rounded-xl border border-[#262626] bg-[#14161C] p-3 text-left hover:border-emerald-500/30"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono font-bold text-white">{inv.invoice_no}</span>
+                      <span className="font-bold text-emerald-400">{formatRupiah(inv.total_amount)}</span>
+                    </div>
+                    <div className="mt-1 text-[10px] text-gray-400">{inv.status === "SUBMITTED" ? "Perlu disetujui/ditolak" : "Dana escrow siap, perlu kirim barang"}</div>
+                  </button>
+                ))}
+                {myInvoices.filter(inv => ["SUBMITTED", "ESCROW_LOCKED"].includes(inv.status)).length === 0 && (
+                  <p className="rounded-xl border border-[#262626] bg-[#14161C] p-4 text-xs text-gray-400">Tidak ada pesanan yang membutuhkan aksi saat ini.</p>
+                )}
+              </div>
+            </div>
+            <div className="bg-[#0F1115] rounded-2xl border border-[#262626] p-5">
+              <h3 className="font-extrabold text-white text-sm mb-3">Aturan Success Fee</h3>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Fee supplier memakai fixed cost bertingkat berdasarkan total nilai barang, bukan persentase dari pencairan. Ini menjaga biaya tetap terbaca untuk supplier dan tidak melonjak berlebihan saat pesanan besar.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         {/* TAB 1: ORDER FULFILLMENT */}
         {activeTab === "pesanan" && (
           <motion.div
@@ -289,7 +353,10 @@ export default function SupplierDashboard({
                                 <span>Terima &amp; Quote</span>
                               </button>
                               <button
-                                onClick={() => onRejectInvoice(inv.id)}
+                                onClick={() => {
+                                  setRejectingInvoiceId(inv.id);
+                                  setSelectedInvoice(inv);
+                                }}
                                 className="bg-[#14161C] hover:bg-red-950/20 text-red-400 border border-[#262626] hover:border-red-500/20 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition-all"
                               >
                                 <X className="w-3.5 h-3.5" />
@@ -325,6 +392,39 @@ export default function SupplierDashboard({
                       {/* Expanded Order Detail Panel */}
                       {isSelected && (
                         <div className="mt-4 bg-[#0A0B0D] p-4 rounded-xl border border-[#262626] space-y-4">
+                          {rejectingInvoiceId === inv.id && (
+                            <div className="bg-red-500/5 p-4 rounded-lg border border-red-500/20 space-y-3 shadow-sm">
+                              <h4 className="font-extrabold text-xs text-red-200 flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4 text-red-400" />
+                                Alasan Penolakan Pesanan
+                              </h4>
+                              <textarea
+                                value={rejectReason}
+                                onChange={(e) => setRejectReason(e.target.value)}
+                                placeholder="Contoh: Stok beras premium sedang kosong, mohon ganti produk atau kurangi jumlah pesanan..."
+                                className="w-full px-3 py-2 bg-[#0A0B0D] border border-[#262626] rounded-lg text-xs text-white focus:ring-1 focus:ring-red-500 outline-none"
+                                rows={2}
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => {
+                                    setRejectingInvoiceId(null);
+                                    setRejectReason("");
+                                  }}
+                                  className="px-3 py-1.5 bg-[#0F1115] hover:bg-[#14161C] border border-[#262626] rounded-lg text-[11px] font-bold text-gray-400"
+                                >
+                                  Batal
+                                </button>
+                                <button
+                                  onClick={() => submitReject(inv.id)}
+                                  className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-[11px]"
+                                >
+                                  Kirim Penolakan
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Shipping Input Box if active */}
                           {shippingInvoiceId === inv.id && (
                             <div className="bg-[#14161C] p-4 rounded-lg border border-indigo-500/20 space-y-3 shadow-sm">
@@ -384,14 +484,21 @@ export default function SupplierDashboard({
                                   <span className="text-gray-400">Nilai Pembiayaan Koperasi:</span>
                                   <span className="font-bold text-emerald-400">{formatRupiah(inv.funding_amount)}</span>
                                 </div>
-                                <div className="flex justify-between text-[11px]">
-                                  <span className="text-gray-400">Success Fee Distributor:</span>
-                                  <span className="font-bold text-red-400">-{formatRupiah(inv.funding_amount * supplierProfile.supplier_fee_rate)}</span>
-                                </div>
-                                <div className="flex justify-between text-[11px] pt-1.5 border-t border-[#262626] font-bold">
-                                  <span className="text-gray-200">Pencairan Bersih Rupiah:</span>
-                                  <span className="text-emerald-400">{formatRupiah(inv.funding_amount - (inv.funding_amount * supplierProfile.supplier_fee_rate))}</span>
-                                </div>
+                                {(() => {
+                                  const feeRule = calculateSupplierSuccessFee(inv.total_amount);
+                                  return (
+                                    <>
+                                      <div className="flex justify-between text-[11px]">
+                                        <span className="text-gray-400">Success Fee Distributor ({feeRule.label}):</span>
+                                        <span className="font-bold text-red-400">-{formatRupiah(feeRule.amount)}</span>
+                                      </div>
+                                      <div className="flex justify-between text-[11px] pt-1.5 border-t border-[#262626] font-bold">
+                                        <span className="text-gray-200">Pencairan Bersih Rupiah:</span>
+                                        <span className="text-emerald-400">{formatRupiah(inv.funding_amount - feeRule.amount)}</span>
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
