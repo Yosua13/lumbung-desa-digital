@@ -1,15 +1,100 @@
 # Soroban + Stellar Testnet Runbook
 
-Runbook ini dijalankan dari Ubuntu/WSL, bukan PowerShell Windows, karena Rust target dan Stellar CLI paling stabil di Linux.
+Runbook ini sengaja dipisah dari frontend:
 
-## 1. Setup Awal Ubuntu
+- Frontend dijalankan di Windows/PowerShell.
+- Smart contract Soroban dijalankan di Ubuntu/WSL.
+
+Tujuannya agar command Rust/Stellar CLI tidak dieksekusi di PowerShell Windows dan command frontend tidak membingungkan setup Ubuntu.
+
+## 0. Struktur Environment
+
+| Kebutuhan | Tempat Jalan | Command Shell |
+| --- | --- | --- |
+| React/Vite frontend | Windows | PowerShell |
+| Freighter browser extension | Windows browser | UI browser |
+| Rust, Stellar CLI, Soroban build/deploy | Ubuntu/WSL | Bash, tanpa pnpm |
+| Contract ID hasil deploy | Disalin ke frontend env | `.env.local` |
+
+## 1. Frontend di Windows
+
+Buka PowerShell:
+
+```powershell
+cd D:\project_yosua\stellar\warung-supplier-credit
+pnpm install
+pnpm run dev
+```
+
+Frontend akan berjalan di:
+
+```text
+http://localhost:3000
+```
+
+Verifikasi frontend:
+
+```powershell
+pnpm run lint
+pnpm run build
+```
+
+Jika `pnpm` belum tersedia di Windows:
+
+```powershell
+corepack enable
+corepack prepare pnpm@latest --activate
+pnpm --version
+```
+
+## 2. Env Frontend di Windows
+
+Buat file env lokal:
+
+```powershell
+cd D:\project_yosua\stellar\warung-supplier-credit
+Copy-Item .env.example .env.local
+```
+
+Sebelum contract deploy, boleh pakai mode demo:
+
+```env
+VITE_ENABLE_LIVE_STELLAR="false"
+VITE_STELLAR_NETWORK="testnet"
+VITE_STELLAR_RPC_URL="https://soroban-testnet.stellar.org"
+VITE_STELLAR_HORIZON_URL="https://horizon-testnet.stellar.org"
+VITE_WSC_POOL_ESCROW_CONTRACT_ID=""
+```
+
+Setelah contract deploy dari Ubuntu/WSL, update:
+
+```env
+VITE_ENABLE_LIVE_STELLAR="true"
+VITE_WSC_POOL_ESCROW_CONTRACT_ID="CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+```
+
+Penting:
+
+- `VITE_WSC_POOL_ESCROW_CONTRACT_ID` wajib diisi jika frontend ingin menampilkan link contract dan menjalankan live Stellar/Soroban flow.
+- Contract ID dan contract address pada Soroban merujuk ke hal yang sama: ID/address contract yang biasanya diawali `C`.
+- Address wallet Freighter user tidak perlu dimasukkan ke env karena user connect melalui tombol `Hubungkan`.
+- Nama wallet Stellar CLI seperti `wsc-testnet` tidak masuk env frontend. Itu hanya alias lokal di Ubuntu/WSL untuk signing/deploy.
+
+## 3. Setup Ubuntu/WSL untuk Soroban
+
+Buka Ubuntu/WSL:
 
 ```bash
 cd /mnt/d/project_yosua/stellar/warung-supplier-credit
-pnpm run contracts:setup:ubuntu
 ```
 
-Script menjalankan:
+Jalankan setup:
+
+```bash
+bash scripts/stellar/setup-ubuntu.sh
+```
+
+Script tersebut menjalankan langkah inti berikut:
 
 ```bash
 sudo apt-get update
@@ -20,16 +105,25 @@ rustup update stable
 rustup default stable
 rustup target add wasm32v1-none
 cargo install --locked stellar-cli
-stellar network add --global testnet --rpc-url https://soroban-testnet.stellar.org --network-passphrase "Test SDF Network ; September 2015"
-stellar keys generate --global wsc-testnet --network testnet
-stellar keys fund wsc-testnet --network testnet
+stellar network add --rpc-url https://soroban-testnet.stellar.org --network-passphrase "Test SDF Network ; September 2015" testnet
+stellar keys generate --network testnet wsc-testnet
+stellar keys fund --network testnet wsc-testnet
 ```
 
-## 2. Build, Deploy, dan Generate Bindings
+Jika ingin memakai nama wallet/identity CLI berbeda:
+
+```bash
+export STELLAR_SOURCE_ACCOUNT="nama-wallet-anda"
+bash scripts/stellar/setup-ubuntu.sh
+```
+
+## 4. Build, Deploy, dan Generate Bindings
+
+Masih di Ubuntu/WSL:
 
 ```bash
 cd /mnt/d/project_yosua/stellar/warung-supplier-credit
-pnpm run contracts:deploy:testnet
+bash scripts/stellar/build-deploy-bindings.sh
 ```
 
 Script menjalankan alur inti:
@@ -44,36 +138,86 @@ stellar contract bindings typescript --network testnet --id <CONTRACT_ID> --outp
 
 Output penting:
 
-- `CONTRACT_ID`
-- `packages/pool_escrow`
-- `.env.stellar.local`
+- `CONTRACT_ID`: address contract Soroban, diawali `C`.
+- `packages/pool_escrow`: TypeScript bindings hasil generate.
+- `.env.stellar.local`: env helper berisi contract ID.
 
-Salin nilai dari `.env.stellar.local` ke `.env` atau `.env.local` bila ingin mengaktifkan live Stellar mode.
+Salin isi `.env.stellar.local` ke `.env.local` frontend di Windows.
 
-## 3. Generate Bindings dari Contract ID yang Sudah Ada
+Contoh:
 
 ```bash
-export WSC_POOL_ESCROW_CONTRACT_ID="<CONTRACT_ID>"
-pnpm run bindings:pool
+cat .env.stellar.local
+```
+
+Lalu di PowerShell Windows:
+
+```powershell
+notepad D:\project_yosua\stellar\warung-supplier-credit\.env.local
+```
+
+## 5. Generate Bindings dari Contract ID yang Sudah Ada
+
+Jika contract sudah deploy dan Anda hanya ingin generate ulang bindings:
+
+```bash
+cd /mnt/d/project_yosua/stellar/warung-supplier-credit
+export WSC_POOL_ESCROW_CONTRACT_ID="CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+bash scripts/stellar/generate-bindings.sh
+```
+
+Jika frontend Windows nanti ingin memasang binding package hasil generate sebagai dependency, jalankan di PowerShell Windows:
+
+```powershell
+cd D:\project_yosua\stellar\warung-supplier-credit
 pnpm add file:./packages/pool_escrow
 ```
 
-## 4. Freighter Testnet
-
-1. Install Freighter extension.
-2. Pilih Stellar Testnet di Freighter.
-3. Fund akun Testnet via Friendbot/Freighter.
-4. Jalankan web app dan klik `Hubungkan` pada dashboard.
-
-## 5. Verifikasi
+Jika memakai network selain default testnet:
 
 ```bash
-pnpm install
+export STELLAR_NETWORK="testnet"
+export WSC_POOL_ESCROW_CONTRACT_ID="CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+bash scripts/stellar/generate-bindings.sh
+```
+
+## 6. Freighter Testnet di Windows
+
+1. Install Freighter extension.
+2. Pilih network `Testnet`.
+3. Fund akun Testnet via Friendbot/Freighter.
+4. Jalankan frontend di Windows.
+5. Klik `Hubungkan` pada dashboard.
+
+Yang masuk env:
+
+- Contract ID/address contract: ya, masukkan ke `VITE_WSC_POOL_ESCROW_CONTRACT_ID`.
+- RPC/Horizon URL: ya, masukkan ke env frontend.
+- Nama wallet Stellar CLI: tidak untuk frontend; optional hanya di Ubuntu via `STELLAR_SOURCE_ACCOUNT`.
+- Address public Freighter user: tidak perlu env; didapat saat user connect.
+- Secret/private key/seed phrase: jangan pernah dimasukkan ke env frontend atau commit repo.
+
+## 7. Verifikasi Akhir
+
+Windows PowerShell:
+
+```powershell
+cd D:\project_yosua\stellar\warung-supplier-credit
+pnpm run lint
 pnpm run build
 pnpm run dev
 ```
 
-Pada dashboard, cek:
+Ubuntu/WSL:
+
+```bash
+cd /mnt/d/project_yosua/stellar/warung-supplier-credit
+stellar --version
+stellar network ls
+stellar keys ls
+```
+
+Pada dashboard frontend, cek:
 
 - Freighter connected.
 - Network match `Test SDF Network ; September 2015`.
