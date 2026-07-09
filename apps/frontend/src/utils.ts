@@ -13,6 +13,21 @@ export function formatRupiah(amount: number): string {
   }).format(amount);
 }
 
+export function onlyDigits(value: string): string {
+  return value.replace(/[^0-9]/g, "");
+}
+
+export function formatIntegerInput(value: string | number): string {
+  const digits = onlyDigits(String(value));
+  if (!digits) return "";
+  return new Intl.NumberFormat("id-ID").format(Number(digits));
+}
+
+export function parseFormattedNumber(value: string): number {
+  const digits = onlyDigits(value);
+  return digits ? Number(digits) : 0;
+}
+
 // Generate a random 64-character hexadecimal string representing a Stellar transaction hash
 export function generateStellarTxHash(): string {
   const chars = "0123456789abcdef";
