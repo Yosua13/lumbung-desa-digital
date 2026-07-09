@@ -1,7 +1,8 @@
 allowBuilds:
   esbuild: true
 packages:
-  - .
+  - "apps/*"
+  - "packages/**"
 
 onlyBuiltDependencies:
   - esbuild
