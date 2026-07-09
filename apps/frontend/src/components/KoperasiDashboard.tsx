@@ -44,7 +44,7 @@ interface KoperasiDashboardProps {
   repaymentSchedules: RepaymentSchedule[];
   parties: Party[];
   onApproveFunding: (invoiceId: string) => void;
-  onRejectFunding: (invoiceId: string) => void;
+  onRejectFunding: (invoiceId: string, reason: string) => void;
   onResolveDispute: (invoiceId: string, solution: "RELEASE" | "REFUND") => void;
   onTriggerOverdueScan: () => void;
 }
@@ -64,14 +64,16 @@ export default function KoperasiDashboard({
   onTriggerOverdueScan,
   activeTab: propActiveTab,
   onTabChange
-}: KoperasiDashboardProps & { activeTab?: "pool" | "persetujuan" | "dispute" | "overdue"; onTabChange?: (tab: "pool" | "persetujuan" | "dispute" | "overdue") => void }) {
+}: KoperasiDashboardProps & { activeTab?: "dashboard" | "pool" | "persetujuan" | "dispute" | "overdue"; onTabChange?: (tab: "dashboard" | "pool" | "persetujuan" | "dispute" | "overdue") => void }) {
   // Tabs
-  const [localActiveTab, setLocalActiveTab] = useState<"pool" | "persetujuan" | "dispute" | "overdue">("persetujuan");
+  const [localActiveTab, setLocalActiveTab] = useState<"dashboard" | "pool" | "persetujuan" | "dispute" | "overdue">("dashboard");
   const activeTab = propActiveTab || localActiveTab;
   const setActiveTab = onTabChange || setLocalActiveTab;
 
   // Detailed Modal/Expand
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [rejectingInvoiceId, setRejectingInvoiceId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   // Filter invoices for approval (Submitted to supplier, or approved by supplier)
   // Koperasi can only approve funding after supplier has accepted the order.
@@ -79,9 +81,11 @@ export default function KoperasiDashboard({
 
   // Filter active escrow invoices
   const activeEscrows = invoices.filter(inv => ["ESCROW_LOCKED", "SHIPPED", "RECEIVED_CONFIRMED"].includes(inv.status));
+  const escrowHistory = invoices.filter(inv => ["PAYOUT_PROCESSING", "REPAYMENT_ACTIVE", "COMPLETED", "REJECTED"].includes(inv.status));
 
   // Filter dispute invoices
   const disputeInvoices = invoices.filter(inv => inv.status === "DISPUTE");
+  const disputeHistory = invoices.filter(inv => Boolean(inv.dispute_solution));
 
   // Filter overdue schedules or invoices
   const overdueSchedules = repaymentSchedules.filter(sch => sch.status === "OVERDUE");
@@ -134,9 +138,22 @@ export default function KoperasiDashboard({
     alert("Invoice disetujui! Dana dialokasikan dari Pool Koperasi dan terkunci di smart escrow Stellar (Soroban). Supplier dapat mulai mengirimkan barang.");
   };
 
+  const submitReject = (invoiceId: string) => {
+    if (!rejectReason.trim()) {
+      alert("Alasan penolakan wajib diisi agar Warung bisa memperbaiki pengajuannya.");
+      return;
+    }
+
+    onRejectFunding(invoiceId, rejectReason.trim());
+    setRejectingInvoiceId(null);
+    setRejectReason("");
+    setSelectedInvoice(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* TOP ROW: Pool Economics Metrics */}
+      {activeTab === "dashboard" && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-[#0F1115] rounded-xl p-5 border border-[#262626] shadow-md flex items-center gap-4">
           <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-lg">
@@ -182,10 +199,20 @@ export default function KoperasiDashboard({
           </div>
         </div>
       </div>
+      )}
 
       {/* MID ROW: Dashboard Tabs switcher */}
       {!propActiveTab && (
         <div className="flex border border-[#262626] bg-[#0F1115] p-1 rounded-xl shadow-md">
+          <button
+            onClick={() => { setActiveTab("dashboard"); setSelectedInvoice(null); }}
+            className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+              activeTab === "dashboard" ? "bg-[#1A1D23] text-emerald-400 border border-emerald-500/20" : "text-gray-400 hover:text-white hover:bg-[#14161C]"
+            }`}
+          >
+            <Coins className="w-4.5 h-4.5" />
+            <span>Dashboard</span>
+          </button>
           <button
             onClick={() => { setActiveTab("persetujuan"); setSelectedInvoice(null); }}
             className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
@@ -237,6 +264,133 @@ export default function KoperasiDashboard({
 
       {/* BOTTOM SECTION: Content tabs */}
       <AnimatePresence mode="wait">
+        {activeTab === "dashboard" && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+          >
+            <div className="bg-[#0F1115] rounded-2xl border border-[#262626] p-5">
+              <h3 className="font-extrabold text-white text-sm mb-3">Antrian Butuh Keputusan</h3>
+              <div className="space-y-2">
+                {pendingInvoices.slice(0, 5).map(inv => (
+                  <button
+                    key={inv.id}
+                    onClick={() => { setActiveTab("persetujuan"); setSelectedInvoice(inv); }}
+                    className="w-full rounded-xl border border-[#262626] bg-[#14161C] p-3 text-left hover:border-emerald-500/30"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono font-bold text-white">{inv.invoice_no}</span>
+                      <span className="font-bold text-emerald-400">{formatRupiah(inv.funding_amount)}</span>
+                    </div>
+                    <div className="mt-1 text-[10px] text-gray-400">Review limit, DP, tenor, dan risiko Warung.</div>
+                  </button>
+                ))}
+                {pendingInvoices.length === 0 && (
+                  <p className="rounded-xl border border-[#262626] bg-[#14161C] p-4 text-xs text-gray-400">Tidak ada pembiayaan yang menunggu persetujuan.</p>
+                )}
+              </div>
+            </div>
+            <div className="bg-[#0F1115] rounded-2xl border border-[#262626] p-5">
+              <h3 className="font-extrabold text-white text-sm mb-3">Kontrol Risiko</h3>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Dashboard ini merangkum posisi pool, escrow, dan pengajuan yang perlu keputusan. Detail operasional tetap berada di menu persetujuan, pool, dispute, dan kolektibilitas.
+              </p>
+            </div>
+
+            <div className="bg-[#0F1115] rounded-2xl border border-[#262626] shadow-md overflow-hidden">
+              <div className="p-5 border-b border-[#262626] bg-[#14161C] font-bold text-white text-sm">
+                Riwayat Escrow Selesai / Refund
+              </div>
+              {escrowHistory.length === 0 ? (
+                <div className="text-center py-10 text-gray-500 text-xs italic font-mono">
+                  Belum ada escrow yang selesai atau direfund.
+                </div>
+              ) : (
+                <div className="overflow-x-auto text-xs">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="bg-[#14161C] border-b border-[#262626] text-gray-400 font-bold uppercase tracking-wider text-[10px]">
+                        <th className="p-4">No Invoice</th>
+                        <th className="p-4">Warung</th>
+                        <th className="p-4">Nilai Barang</th>
+                        <th className="p-4">Nilai Pool</th>
+                        <th className="p-4">Status Akhir</th>
+                        <th className="p-4">Keputusan</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#262626] text-gray-300 font-medium">
+                      {escrowHistory.map(esc => {
+                        const { party } = getWarungInfo(esc.warung_id);
+                        return (
+                          <tr key={esc.id} className="hover:bg-white/5 transition-colors">
+                            <td className="p-4 font-mono font-bold text-white">{esc.invoice_no}</td>
+                            <td className="p-4 font-bold text-gray-200">{party?.display_name}</td>
+                            <td className="p-4 font-extrabold text-white">{formatRupiah(esc.total_amount)}</td>
+                            <td className="p-4 font-extrabold text-emerald-400">{formatRupiah(esc.funding_amount)}</td>
+                            <td className="p-4">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                {esc.status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-gray-400">{esc.dispute_solution || "Escrow release normal"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-[#0F1115] rounded-2xl border border-[#262626] shadow-md overflow-hidden">
+              <div className="p-5 border-b border-[#262626] bg-[#14161C] flex justify-between items-center">
+                <h3 className="font-extrabold text-white text-sm">Riwayat Arbitrase Dispute</h3>
+                <span className="text-xs text-gray-400 font-semibold font-mono">{disputeHistory.length} Keputusan</span>
+              </div>
+              {disputeHistory.length === 0 ? (
+                <div className="text-center py-10 text-gray-500 text-xs italic font-mono">
+                  Belum ada dispute yang diputus oleh koperasi.
+                </div>
+              ) : (
+                <div className="overflow-x-auto text-xs">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="bg-[#14161C] border-b border-[#262626] text-gray-400 font-bold uppercase tracking-wider text-[10px]">
+                        <th className="p-4">No Invoice</th>
+                        <th className="p-4">Warung</th>
+                        <th className="p-4">Alasan Dispute</th>
+                        <th className="p-4">Nilai Barang</th>
+                        <th className="p-4">Keputusan Akhir</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#262626] text-gray-300 font-medium">
+                      {disputeHistory.map(dis => {
+                        const { party } = getWarungInfo(dis.warung_id);
+                        return (
+                          <tr key={dis.id} className="hover:bg-white/5 transition-colors">
+                            <td className="p-4 font-mono font-bold text-white">{dis.invoice_no}</td>
+                            <td className="p-4 font-bold text-gray-200">{party?.display_name}</td>
+                            <td className="p-4 text-gray-400 max-w-xs truncate">{dis.dispute_reason || "-"}</td>
+                            <td className="p-4 font-extrabold text-white">{formatRupiah(dis.total_amount)}</td>
+                            <td className="p-4">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold border bg-indigo-500/10 text-indigo-400 border-indigo-500/20">
+                                {dis.dispute_solution}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {/* TAB 1: PERSIDANGAN / APPROVAL QUEUE */}
         {activeTab === "persetujuan" && (
           <motion.div
@@ -293,7 +447,10 @@ export default function KoperasiDashboard({
                                 <span>Setujui &amp; Lock Dana</span>
                               </button>
                               <button
-                                onClick={() => onRejectFunding(inv.id)}
+                                onClick={() => {
+                                  setRejectingInvoiceId(inv.id);
+                                  setSelectedInvoice(inv);
+                                }}
                                 className="bg-[#14161C] hover:bg-red-950/20 text-red-400 border border-[#262626] hover:border-red-500/20 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition-all"
                               >
                                 <X className="w-3.5 h-3.5" />
@@ -313,6 +470,38 @@ export default function KoperasiDashboard({
                         {/* Expandable Review panel */}
                         {isSelected && (
                           <div className="mt-4 bg-[#0A0B0D] p-4 rounded-xl border border-[#262626] space-y-4">
+                            {rejectingInvoiceId === inv.id && (
+                              <div className="bg-red-500/5 p-4 rounded-lg border border-red-500/20 space-y-3 shadow-sm">
+                                <h4 className="font-extrabold text-xs text-red-200 flex items-center gap-2">
+                                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                                  Alasan Penolakan Pendanaan
+                                </h4>
+                                <textarea
+                                  value={rejectReason}
+                                  onChange={(e) => setRejectReason(e.target.value)}
+                                  placeholder="Contoh: DP terlalu kecil untuk nilai pesanan, tenor perlu dipendekkan, atau risiko omzet belum memadai..."
+                                  className="w-full px-3 py-2 bg-[#0A0B0D] border border-[#262626] rounded-lg text-xs text-white focus:ring-1 focus:ring-red-500 outline-none"
+                                  rows={2}
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setRejectingInvoiceId(null);
+                                      setRejectReason("");
+                                    }}
+                                    className="px-3 py-1.5 bg-[#0F1115] hover:bg-[#14161C] border border-[#262626] rounded-lg text-[11px] font-bold text-gray-400"
+                                  >
+                                    Batal
+                                  </button>
+                                  <button
+                                    onClick={() => submitReject(inv.id)}
+                                    className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-[11px]"
+                                  >
+                                    Kirim Penolakan
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
                               {/* Left profile analysis */}
                               <div className="space-y-2">
