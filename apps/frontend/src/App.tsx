@@ -48,6 +48,34 @@ function AppLoadingFallback() {
   );
 }
 
+function AnimateToast({
+  toast,
+  onClose
+}: {
+  toast: { message: string; tone: "success" | "error" | "info" } | null;
+  onClose: () => void;
+}) {
+  if (!toast) return null;
+  const toneClass = toast.tone === "error"
+    ? "border-red-500/30 bg-red-500/10 text-red-100"
+    : toast.tone === "success"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+      : "border-indigo-500/30 bg-[#0F1115] text-gray-100";
+
+  return (
+    <div className="fixed bottom-6 right-6 z-[90] w-[min(360px,calc(100vw-2rem))]">
+      <div className={`rounded-2xl border p-4 shadow-2xl backdrop-blur ${toneClass}`}>
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-semibold leading-relaxed">{toast.message}</p>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-xs font-extrabold text-gray-300 hover:bg-white/10 hover:text-white">
+            X
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const stellarWallet = useStellarWallet();
 
@@ -98,6 +126,19 @@ export default function App() {
   // Advanced Encryption - Security States
   const [kmsKeyId, setKmsKeyId] = useState<string>("kms-key-v1-active");
   const [isRotatingKey, setIsRotatingKey] = useState<boolean>(false);
+  const [appToast, setAppToast] = useState<{ message: string; tone: "success" | "error" | "info" } | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  useEffect(() => {
+    const originalAlert = window.alert;
+    window.alert = (message?: any) => {
+      setAppToast({ message: String(message || ""), tone: "info" });
+      window.setTimeout(() => setAppToast(null), 3600);
+    };
+    return () => {
+      window.alert = originalAlert;
+    };
+  }, []);
 
   // Active party selection based on the role
   const [activePartyId, setActivePartyId] = useState<string>("party-warung-01");
@@ -162,7 +203,7 @@ export default function App() {
   };
 
   // 1. ACTION: Create a draft invoice from Warung cart
-  const handleCreateInvoice = (supplierId: string, items: CartItem[], dp: number, tenor: number) => {
+  const handleCreateInvoice = (supplierId: string, items: CartItem[], dp: number, tenor: number, repaymentType: "INSTALLMENT" | "BALLOON", installmentCount: 1 | 2 | 3) => {
     const quote = calculateInvoiceQuote(items, dp);
 
     if (items.length === 0 || quote.totalAmount <= 0) {
@@ -185,6 +226,8 @@ export default function App() {
       down_payment_amount: quote.downPaymentAmount,
       funding_amount: quote.fundingAmount,
       warung_fee_amount: quote.warungFeeAmount,
+      repayment_type: repaymentType,
+      installment_count: installmentCount,
       due_date: new Date(Date.now() + tenor * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
       tenor_days: tenor,
       status: "DRAFT",
@@ -212,7 +255,7 @@ export default function App() {
     postStellarTx("INVOICE", newInvoice.id, "SIMULATED_EVENT");
   };
 
-  const handleUpdateDraftInvoice = (invoiceId: string, supplierId: string, items: CartItem[], dp: number, tenor: number) => {
+  const handleUpdateDraftInvoice = (invoiceId: string, supplierId: string, items: CartItem[], dp: number, tenor: number, repaymentType: "INSTALLMENT" | "BALLOON", installmentCount: 1 | 2 | 3) => {
     const quote = calculateInvoiceQuote(items, dp);
 
     if (items.length === 0 || quote.totalAmount <= 0 || quote.fundingAmount <= 0) {
@@ -221,8 +264,8 @@ export default function App() {
     }
 
     const currentInvoice = invoices.find(inv => inv.id === invoiceId);
-    if (!currentInvoice || currentInvoice.status !== "DRAFT") {
-      alert("Hanya invoice berstatus belum diajukan yang dapat diedit.");
+      if (!currentInvoice || !["DRAFT", "REJECTED"].includes(currentInvoice.status)) {
+      alert("Hanya invoice berstatus draft atau ditolak yang dapat diedit.");
       return;
     }
 
@@ -245,8 +288,11 @@ export default function App() {
         down_payment_amount: quote.downPaymentAmount,
         funding_amount: quote.fundingAmount,
         warung_fee_amount: quote.warungFeeAmount,
+        repayment_type: repaymentType,
+        installment_count: installmentCount,
         due_date: new Date(Date.now() + tenor * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
         tenor_days: tenor,
+        status: "DRAFT",
         rejection_reason: undefined,
         row_version: inv.row_version + 1
       };
@@ -308,7 +354,7 @@ export default function App() {
       if (inv.id === invoiceId) {
         const updated = {
           ...inv,
-          status: "DRAFT" as const,
+          status: "REJECTED" as const,
           rejection_reason: reason,
           row_version: inv.row_version + 1
         };
@@ -338,14 +384,48 @@ export default function App() {
 
   const handleDeleteDraftInvoice = (invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
-    if (!invoice || invoice.status !== "DRAFT") {
-      alert("Hanya draft pengajuan yang dapat dihapus.");
+    if (!invoice || !["DRAFT", "REJECTED"].includes(invoice.status)) {
+      alert("Hanya draft atau pengajuan yang ditolak yang dapat dihapus.");
       return;
     }
 
     setInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
     setInvoiceItems(prev => prev.filter(item => item.invoice_id !== invoiceId));
     postAuditLog("DELETE_DRAFT_INVOICE", "INVOICE", invoiceId, invoice, {});
+  };
+
+  const handleCancelSubmittedInvoice = (invoiceId: string) => {
+    setInvoices(prev => prev.map(inv => {
+      if (inv.id !== invoiceId) return inv;
+      if (inv.status !== "SUBMITTED") {
+        alert("Pengajuan hanya bisa dibatalkan saat masih menunggu supplier.");
+        return inv;
+      }
+
+      const updated = {
+        ...inv,
+        status: "REJECTED" as const,
+        rejection_reason: "Dibatalkan oleh Warung sebelum supplier memproses pesanan.",
+        row_version: inv.row_version + 1
+      };
+
+      setWarungProfiles(prevP => prevP.map(p => {
+        if (p.party_id === inv.warung_id) {
+          return { ...p, available_limit: p.available_limit + inv.funding_amount };
+        }
+        return p;
+      }));
+
+      setLedgerAccounts(prevLed => prevLed.map(acc => {
+        if (acc.account_no === "12100") {
+          return { ...acc, available_balance: Math.max(0, acc.available_balance - inv.funding_amount) };
+        }
+        return acc;
+      }));
+
+      postAuditLog("WARUNG_CANCEL_SUBMITTED_INVOICE", "INVOICE", invoiceId, inv, updated);
+      return updated;
+    }));
   };
 
   // 4. ACTION: Koperasi approves risk and locks funding pool
@@ -398,7 +478,7 @@ export default function App() {
       if (inv.id === invoiceId) {
         const updated = {
           ...inv,
-          status: "DRAFT" as const,
+          status: "REJECTED" as const,
           rejection_reason: reason,
           row_version: inv.row_version + 1
         };
@@ -462,6 +542,7 @@ export default function App() {
         const updated = {
           ...inv,
           status: "RECEIVED_CONFIRMED" as const,
+          dp_paid_at: new Date().toISOString(),
           receipt_note: note,
           receipt_proof_urls: proofUrls,
           row_version: inv.row_version + 1
@@ -496,8 +577,12 @@ export default function App() {
 
   // Logic Background worker payout (auto-cashout Rupiah)
   const triggerPayoutWorker = (invoiceId: string, grossAmount: number, supplierId: string) => {
+    if (payouts.some(payout => payout.invoice_id === invoiceId)) {
+      return;
+    }
+
     const invData = invoices.find(i => i.id === invoiceId);
-    const payoutGrossAmount = invData?.total_amount || grossAmount;
+    const payoutGrossAmount = grossAmount;
     const feeAmount = calculateSupplierFee(payoutGrossAmount);
     const netAmount = payoutGrossAmount - feeAmount;
 
@@ -513,7 +598,7 @@ export default function App() {
       created_at: new Date().toISOString()
     };
 
-    setPayouts(prev => [newPayout, ...prev]);
+    setPayouts(prev => prev.some(payout => payout.invoice_id === invoiceId) ? prev : [newPayout, ...prev]);
 
     // Release funds from Koperasi locked escrow pool
     setPool(prevPool => ({
@@ -547,9 +632,19 @@ export default function App() {
 
     // Create flexible repayment schedule records for Warung (PRD/SRS).
     const totalFinancing = invData ? invData.funding_amount + invData.warung_fee_amount : grossAmount;
-    const schedules = createFlexibleRepaymentSchedules(invoiceId, totalFinancing, invData?.tenor_days || 30);
+    const schedules = createFlexibleRepaymentSchedules(
+      invoiceId,
+      totalFinancing,
+      invData?.tenor_days || 30,
+      invData?.installment_count || 3
+    );
 
-    setRepaymentSchedules(prev => [...schedules, ...prev]);
+    setRepaymentSchedules(prev => {
+      if (prev.some(schedule => schedule.invoice_id === invoiceId)) {
+        return prev;
+      }
+      return [...schedules, ...prev];
+    });
 
     // Move invoice status to REPAYMENT_ACTIVE
     setInvoices(prev => prev.map(inv => {
@@ -1006,7 +1101,10 @@ export default function App() {
 
   // Reset all simulation back to pristine state
   const handleResetState = () => {
-    if (confirm("Apakah Anda yakin ingin menyetel ulang (reset) seluruh data simulasi? Seluruh pesanan, repayment, and audit logs baru akan terhapus.")) {
+    setShowResetConfirm(true);
+  };
+
+  const executeResetState = () => {
       setParties(initialParties);
       setWarungProfiles(initialWarungProfiles);
       setSupplierProfiles(initialSupplierProfiles);
@@ -1044,7 +1142,7 @@ export default function App() {
       });
 
       alert("Data simulasi sukses dikembalikan ke kondisi awal (pristine state)!");
-    }
+      setShowResetConfirm(false);
   };
 
   const currentWalletBalance = walletBalances[activePartyId] || 0;
@@ -1060,6 +1158,26 @@ export default function App() {
   return (
     <Suspense fallback={<AppLoadingFallback />}>
       <div className="min-h-screen flex flex-col bg-[#07080A] text-[#E0E0E0]">
+      <AnimateToast toast={appToast} onClose={() => setAppToast(null)} />
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-red-500/20 bg-[#0F1115] p-6 shadow-2xl">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-red-400">Konfirmasi Reset</div>
+            <h3 className="mt-2 text-lg font-extrabold text-white">Reset data simulasi?</h3>
+            <p className="mt-2 text-sm leading-relaxed text-gray-400">
+              Seluruh pesanan, repayment, payout, dan audit log baru akan dikembalikan ke data awal.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setShowResetConfirm(false)} className="rounded-xl border border-[#262626] px-4 py-2 text-xs font-bold text-gray-300 hover:text-white">
+                Batal
+              </button>
+              <button onClick={executeResetState} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-red-700">
+                Reset Data
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {loggedIn ? (
         <div className="flex-grow flex flex-col md:flex-row bg-[#0A0B0D] text-[#E0E0E0] font-sans">
           
@@ -1126,6 +1244,7 @@ export default function App() {
                   onCreateInvoice={handleCreateInvoice}
                   onUpdateDraftInvoice={handleUpdateDraftInvoice}
                   onSubmitDraftInvoice={handleSubmitDraftInvoice}
+                  onCancelSubmittedInvoice={handleCancelSubmittedInvoice}
                   onDeleteDraftInvoice={handleDeleteDraftInvoice}
                   onConfirmReceipt={handleConfirmReceipt}
                   onPayInstallment={handlePayInstallment}
