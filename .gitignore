@@ -4,8 +4,8 @@ dist/
 coverage/
 tmp/
 contracts/target/
-packages/*/node_modules/
-packages/*/dist/
+packages/**/node_modules/
+packages/**/dist/
 .env.stellar.local
 .DS_Store
 *.log
@@ -17,4 +17,4 @@ packages/*/dist/
 .antigravity/
 
 # Generated Stellar bindings
-packages/pool_escrow/
+packages/stellar-bindings/pool_escrow/
