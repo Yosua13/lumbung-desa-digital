@@ -65,6 +65,15 @@ graph TD
     K -- "Catat Pengembalian ke Ledger" --> SC
 ```
 
+## 📂 Struktur Repositori (Monorepo)
+
+Project ini menggunakan arsitektur **Web3 Monorepo** dengan `pnpm workspaces`:
+- `apps/frontend/`: Frontend React/Vite (terstruktur berdasarkan fitur per role/aktor).
+- `apps/api/`: (Mendatang) Backend Go dengan Clean Architecture.
+- `packages/stellar-bindings/`: Hasil generate binding Soroban CLI.
+- `contracts/pool_escrow/`: Smart contract Soroban (Rust).
+- `scripts/`: Skrip deployment & setup (untuk WSL/Ubuntu).
+
 ---
 
 ## 🚀 Panduan Menjalankan Project
