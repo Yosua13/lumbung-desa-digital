@@ -4,8 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NETWORK_NAME="${STELLAR_NETWORK:-testnet}"
 SOURCE_ACCOUNT="${STELLAR_SOURCE_ACCOUNT:-wsc-testnet}"
-BINDINGS_OUT_DIR="${BINDINGS_OUT_DIR:-$REPO_ROOT/packages/pool_escrow}"
-ENV_OUT_FILE="${ENV_OUT_FILE:-$REPO_ROOT/.env.stellar.local}"
+BINDINGS_OUT_DIR="${BINDINGS_OUT_DIR:-$REPO_ROOT/packages/stellar-bindings/pool_escrow}"
+ENV_OUT_FILE="${ENV_OUT_FILE:-$REPO_ROOT/apps/frontend/.env.stellar.local}"
 
 # shellcheck disable=SC1090
 source "$HOME/.cargo/env" 2>/dev/null || true
@@ -62,4 +62,4 @@ echo "WASM hash: $WASM_HASH"
 echo "Contract ID: $CONTRACT_ID"
 echo "Bindings: $BINDINGS_OUT_DIR"
 echo "Env file: $ENV_OUT_FILE"
-echo "Next for Windows frontend only, if needed: pnpm add file:./packages/pool_escrow"
+echo "Next for Windows frontend only, if needed: cd apps/frontend && pnpm add file:../../packages/stellar-bindings/pool_escrow"

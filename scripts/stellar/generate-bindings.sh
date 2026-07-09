@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NETWORK_NAME="${STELLAR_NETWORK:-testnet}"
 CONTRACT_ID="${WSC_POOL_ESCROW_CONTRACT_ID:-${VITE_WSC_POOL_ESCROW_CONTRACT_ID:-}}"
-BINDINGS_OUT_DIR="${BINDINGS_OUT_DIR:-$REPO_ROOT/packages/pool_escrow}"
+BINDINGS_OUT_DIR="${BINDINGS_OUT_DIR:-$REPO_ROOT/packages/stellar-bindings/pool_escrow}"
 
 if [[ -z "$CONTRACT_ID" ]]; then
   echo "Set WSC_POOL_ESCROW_CONTRACT_ID or VITE_WSC_POOL_ESCROW_CONTRACT_ID first." >&2
