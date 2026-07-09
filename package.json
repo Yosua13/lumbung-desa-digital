@@ -7,11 +7,8 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "clean": "rimraf dist",
-    "lint": "tsc --noEmit",
-    "contracts:setup:ubuntu": "bash scripts/stellar/setup-ubuntu.sh",
-    "contracts:deploy:testnet": "bash scripts/stellar/build-deploy-bindings.sh",
-    "bindings:pool": "bash scripts/stellar/generate-bindings.sh"
+    "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
