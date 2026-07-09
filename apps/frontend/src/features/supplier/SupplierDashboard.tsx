@@ -32,9 +32,9 @@ import {
   Invoice,
   InvoiceItem,
   Payout
-} from "../types";
-import { formatRupiah, generateId } from "../utils";
-import { calculateSupplierSuccessFee } from "../domain/finance";
+} from "../../types";
+import { formatRupiah, generateId } from "../../utils";
+import { calculateSupplierSuccessFee } from "../../domain/finance";
 
 interface SupplierDashboardProps {
   activeParty: Party;

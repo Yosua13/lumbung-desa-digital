@@ -31,8 +31,8 @@ import {
   Invoice,
   InvoiceItem,
   RepaymentSchedule
-} from "../types";
-import { formatRupiah, maskPII } from "../utils";
+} from "../../types";
+import { formatRupiah, maskPII } from "../../utils";
 
 interface KoperasiDashboardProps {
   activeParty: Party;

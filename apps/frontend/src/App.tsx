@@ -29,14 +29,14 @@ import { createStellarTransactionRecord, StellarTransactionInput } from "./web3/
 
 import WalletConnectionBar from "./components/WalletConnectionBar";
 
-const RoleSelector = lazy(() => import("./components/RoleSelector"));
-const WarungDashboard = lazy(() => import("./components/WarungDashboard"));
-const SupplierDashboard = lazy(() => import("./components/SupplierDashboard"));
-const KoperasiDashboard = lazy(() => import("./components/KoperasiDashboard"));
-const InvestorDashboard = lazy(() => import("./components/InvestorDashboard"));
-const AdminDashboard = lazy(() => import("./components/AdminDashboard"));
-const LandingPage = lazy(() => import("./components/LandingPage"));
-const Sidebar = lazy(() => import("./components/Sidebar"));
+const RoleSelector = lazy(() => import("./pages/RoleSelector"));
+const WarungDashboard = lazy(() => import("./features/warung/WarungDashboard"));
+const SupplierDashboard = lazy(() => import("./features/supplier/SupplierDashboard"));
+const KoperasiDashboard = lazy(() => import("./features/koperasi/KoperasiDashboard"));
+const InvestorDashboard = lazy(() => import("./features/investor/InvestorDashboard"));
+const AdminDashboard = lazy(() => import("./features/admin/AdminDashboard"));
+const LandingPage = lazy(() => import("./pages/LandingPage"));
+const Sidebar = lazy(() => import("./layouts/Sidebar"));
 
 function AppLoadingFallback() {
   return (

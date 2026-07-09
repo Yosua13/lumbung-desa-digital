@@ -25,8 +25,8 @@ import {
   CooperativePool,
   PoolContribution,
   Invoice
-} from "../types";
-import { formatRupiah, generateId } from "../utils";
+} from "../../types";
+import { formatRupiah, generateId } from "../../utils";
 
 interface InvestorDashboardProps {
   activeParty: Party;
