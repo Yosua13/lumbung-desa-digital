@@ -98,10 +98,10 @@ pnpm run build
 
 ### 2. Environment Frontend
 
-Buat file `.env.local` dari `.env.example`:
+Buat file `.env.local` dari `.env.example` di dalam direktori frontend:
 
 ```powershell
-Copy-Item .env.example .env.local
+Copy-Item apps/frontend/.env.example apps/frontend/.env.local
 ```
 
 Untuk mode demo tanpa koneksi live contract (menggunakan mock data):
@@ -138,7 +138,7 @@ Build, deploy contract, dan generate TypeScript bindings:
 bash scripts/stellar/build-deploy-bindings.sh
 ```
 
-Script di atas akan menghasilkan file `.env.stellar.local` yang berisi contract ID hasil deploy. Salin nilai tersebut ke `.env.local` frontend di Windows Anda.
+Script di atas akan menghasilkan file `.env.stellar.local` yang berisi contract ID hasil deploy di dalam folder `apps/frontend/` Anda.
 
 Detail lengkap setup Soroban dapat dibaca di: [docs/runbooks/soroban-stellar-testnet.md](docs/runbooks/soroban-stellar-testnet.md)
 

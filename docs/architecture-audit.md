@@ -46,5 +46,5 @@ Project saat ini adalah React/Vite single-page demo yang sudah kuat untuk pitch 
 2. Pindahkan semua mutation finansial dari React ke API service transaction.
 3. Tambahkan PostgreSQL migration untuk users, parties, invoices, pools, funding_allocations, payouts, withdrawals, ledger, audit, outbox, dan stellar logs.
 4. Implement outbox worker untuk payout, repayment overdue scan, Stellar reconciliation, dan notification.
-5. Integrasikan binding `packages/pool_escrow` ke adapter frontend/backend setelah kontrak dideploy.
+5. Integrasikan binding `packages/stellar-bindings/pool_escrow` ke adapter frontend/backend setelah kontrak dideploy.
 6. Tambahkan test unit untuk invoice calculation, status transition, ledger balance, dan contract tests.

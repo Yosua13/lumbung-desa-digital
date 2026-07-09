@@ -133,27 +133,27 @@ cd contracts
 stellar contract build
 stellar contract upload --source-account wsc-testnet --network testnet --wasm ./target/wasm32v1-none/release/pool_escrow.wasm
 stellar contract deploy --source-account wsc-testnet --network testnet --wasm-hash <WASM_HASH>
-stellar contract bindings typescript --network testnet --id <CONTRACT_ID> --output-dir ./packages/pool_escrow --overwrite
+stellar contract bindings typescript --network testnet --id <CONTRACT_ID> --output-dir ./packages/stellar-bindings/pool_escrow --overwrite
 ```
 
 Output penting:
 
 - `CONTRACT_ID`: address contract Soroban, diawali `C`.
-- `packages/pool_escrow`: TypeScript bindings hasil generate.
-- `.env.stellar.local`: env helper berisi contract ID.
+- `packages/stellar-bindings/pool_escrow`: TypeScript bindings hasil generate.
+- `apps/frontend/.env.stellar.local`: env helper berisi contract ID.
 
-Salin isi `.env.stellar.local` ke `.env.local` frontend di Windows.
+Salin isi `apps/frontend/.env.stellar.local` ke `apps/frontend/.env.local` frontend di Windows.
 
 Contoh:
 
 ```bash
-cat .env.stellar.local
+cat apps/frontend/.env.stellar.local
 ```
 
 Lalu di PowerShell Windows:
 
 ```powershell
-notepad D:\project_yosua\stellar\warung-supplier-credit\.env.local
+notepad D:\project_yosua\stellar\warung-supplier-credit\apps\frontend\.env.local
 ```
 
 ## 5. Generate Bindings dari Contract ID yang Sudah Ada
@@ -169,8 +169,8 @@ bash scripts/stellar/generate-bindings.sh
 Jika frontend Windows nanti ingin memasang binding package hasil generate sebagai dependency, jalankan di PowerShell Windows:
 
 ```powershell
-cd D:\project_yosua\stellar\warung-supplier-credit
-pnpm add file:./packages/pool_escrow
+cd D:\project_yosua\stellar\warung-supplier-credit\apps\frontend
+pnpm add file:../../packages/stellar-bindings/pool_escrow
 ```
 
 Jika memakai network selain default testnet:
