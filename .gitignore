@@ -15,3 +15,6 @@ packages/*/dist/
 # IDE & AI Studio settings
 .vscode/
 .antigravity/
+
+# Generated Stellar bindings
+packages/pool_escrow/
