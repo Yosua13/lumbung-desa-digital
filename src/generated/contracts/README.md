@@ -6,7 +6,7 @@ Binding final tidak di-commit sebagai source manual. Jalankan dari Ubuntu/WSL se
 berhasil dibuild dan dideploy:
 
 ```bash
-pnpm run contracts:deploy:testnet
+bash scripts/stellar/build-deploy-bindings.sh
 ```
 
 Script akan menghasilkan package binding di `packages/pool_escrow` menggunakan:
