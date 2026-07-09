@@ -887,6 +887,24 @@ export default function App() {
     }));
   };
 
+  const handleUpdateProduct = (productId: string, productData: Omit<Product, "id" | "supplier_id" | "is_active">) => {
+    setProducts(prev => prev.map(product => {
+      if (product.id !== productId || product.supplier_id !== activePartyId) return product;
+      const updated = { ...product, ...productData };
+      postAuditLog("UPDATE_PRODUCT_CATALOG", "PRODUCT", productId, product, updated);
+      return updated;
+    }));
+  };
+
+  const handleDeleteProduct = (productId: string) => {
+    setProducts(prev => prev.map(product => {
+      if (product.id !== productId || product.supplier_id !== activePartyId) return product;
+      const updated = { ...product, is_active: false, stock_status: "OUT_OF_STOCK" as const };
+      postAuditLog("DELETE_PRODUCT_CATALOG", "PRODUCT", productId, product, updated);
+      return updated;
+    }));
+  };
+
   // 16. ACTION: Admin approves KYC profile for onboarding user
   const handleApprovePartyKYC = (partyId: string) => {
     setParties(prevParties => prevParties.map(p => {
@@ -1128,6 +1146,8 @@ export default function App() {
                   invoiceItems={invoiceItems}
                   payouts={payouts}
                   onAddProduct={handleAddProduct}
+                  onUpdateProduct={handleUpdateProduct}
+                  onDeleteProduct={handleDeleteProduct}
                   onUpdateStockStatus={handleUpdateStockStatus}
                   onApproveInvoice={handleApproveInvoice}
                   onRejectInvoice={handleRejectInvoice}
