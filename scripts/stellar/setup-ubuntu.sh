@@ -31,16 +31,16 @@ stellar --version
 
 if ! stellar network ls | grep -q "^${NETWORK_NAME}$"; then
   stellar network add \
-    --global "$NETWORK_NAME" \
     --rpc-url "$RPC_URL" \
-    --network-passphrase "$NETWORK_PASSPHRASE"
+    --network-passphrase "$NETWORK_PASSPHRASE" \
+    "$NETWORK_NAME"
 fi
 
 if ! stellar keys ls | grep -q "^${SOURCE_ACCOUNT}$"; then
-  stellar keys generate --global "$SOURCE_ACCOUNT" --network "$NETWORK_NAME"
+  stellar keys generate --network "$NETWORK_NAME" "$SOURCE_ACCOUNT"
 fi
 
-stellar keys fund "$SOURCE_ACCOUNT" --network "$NETWORK_NAME"
+stellar keys fund --network "$NETWORK_NAME" "$SOURCE_ACCOUNT"
 
 echo "Soroban/Stellar testnet setup is ready."
 echo "Network: $NETWORK_NAME"
