@@ -109,10 +109,10 @@ export default function App() {
       setActiveTab("profil");
     } else if (currentRole === RoleCode.SUPPLIER) {
       setActivePartyId("party-supplier-01");
-      setActiveTab("pesanan");
+      setActiveTab("dashboard");
     } else if (currentRole === RoleCode.KOPERASI) {
       setActivePartyId("party-coop-01");
-      setActiveTab("persetujuan");
+      setActiveTab("dashboard");
     } else if (currentRole === RoleCode.INVESTOR) {
       setActivePartyId("party-investor-01");
       setActiveTab("portfolio");
@@ -161,7 +161,7 @@ export default function App() {
     return tx.tx_hash;
   };
 
-  // 1. ACTION: Create a new Invoice from Warung checkout
+  // 1. ACTION: Create a draft invoice from Warung cart
   const handleCreateInvoice = (supplierId: string, items: CartItem[], dp: number, tenor: number) => {
     const quote = calculateInvoiceQuote(items, dp);
 
@@ -172,11 +172,6 @@ export default function App() {
 
     if (quote.fundingAmount <= 0) {
       alert("Nilai pembiayaan harus lebih besar dari nol setelah DP.");
-      return;
-    }
-
-    if (quote.fundingAmount > activeWarungProfile.available_limit) {
-      alert("Nilai pembiayaan melebihi limit tersedia warung.");
       return;
     }
 
@@ -192,7 +187,7 @@ export default function App() {
       warung_fee_amount: quote.warungFeeAmount,
       due_date: new Date(Date.now() + tenor * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
       tenor_days: tenor,
-      status: "SUBMITTED",
+      status: "DRAFT",
       row_version: 1,
       created_at: new Date().toISOString()
     };
@@ -208,32 +203,90 @@ export default function App() {
       line_total: item.product.unit_price * item.qty
     }));
 
-    // Deduct available credit limit for the warung
-    setWarungProfiles(prev => prev.map(p => {
-      if (p.party_id === activePartyId) {
-        return {
-          ...p,
-          available_limit: Math.max(0, p.available_limit - quote.fundingAmount)
-        };
-      }
-      return p;
-    }));
-
     // Update states
     setInvoices(prev => [newInvoice, ...prev]);
     setInvoiceItems(prev => [...newItems, ...prev]);
 
-    // Ledger posting adjustment: Increase outstanding receivables
-    setLedgerAccounts(prev => prev.map(acc => {
-      if (acc.account_no === "12100") { // receivables asset
-        return { ...acc, available_balance: acc.available_balance + quote.fundingAmount };
-      }
-      return acc;
+    // Logs
+    postAuditLog("CREATE_DRAFT_INVOICE", "INVOICE", newInvoice.id, {}, newInvoice);
+    postStellarTx("INVOICE", newInvoice.id, "SIMULATED_EVENT");
+  };
+
+  const handleUpdateDraftInvoice = (invoiceId: string, supplierId: string, items: CartItem[], dp: number, tenor: number) => {
+    const quote = calculateInvoiceQuote(items, dp);
+
+    if (items.length === 0 || quote.totalAmount <= 0 || quote.fundingAmount <= 0) {
+      alert("Draft belum valid untuk diperbarui.");
+      return;
+    }
+
+    const currentInvoice = invoices.find(inv => inv.id === invoiceId);
+    if (!currentInvoice || currentInvoice.status !== "DRAFT") {
+      alert("Hanya invoice berstatus belum diajukan yang dapat diedit.");
+      return;
+    }
+
+    const updatedItems: InvoiceItem[] = items.map(item => ({
+      id: generateId("ITEM"),
+      invoice_id: invoiceId,
+      product_id: item.product.id,
+      product_name_snapshot: item.product.name,
+      qty: item.qty,
+      unit_price_snapshot: item.product.unit_price,
+      line_total: item.product.unit_price * item.qty
     }));
 
-    // Logs
-    postAuditLog("CREATE_INVOICE_FINANCING", "INVOICE", newInvoice.id, {}, newInvoice);
-    postStellarTx("INVOICE", newInvoice.id, "SIMULATED_EVENT");
+    setInvoices(prev => prev.map(inv => {
+      if (inv.id !== invoiceId) return inv;
+      const updated: Invoice = {
+        ...inv,
+        supplier_id: supplierId,
+        total_amount: quote.totalAmount,
+        down_payment_amount: quote.downPaymentAmount,
+        funding_amount: quote.fundingAmount,
+        warung_fee_amount: quote.warungFeeAmount,
+        due_date: new Date(Date.now() + tenor * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
+        tenor_days: tenor,
+        rejection_reason: undefined,
+        row_version: inv.row_version + 1
+      };
+      postAuditLog("UPDATE_DRAFT_INVOICE", "INVOICE", invoiceId, inv, updated);
+      return updated;
+    }));
+    setInvoiceItems(prev => [...updatedItems, ...prev.filter(item => item.invoice_id !== invoiceId)]);
+  };
+
+  const handleSubmitDraftInvoice = (invoiceId: string) => {
+    setInvoices(prev => prev.map(inv => {
+      if (inv.id !== invoiceId) return inv;
+      if (inv.status !== "DRAFT") {
+        alert("Hanya draft yang bisa diajukan.");
+        return inv;
+      }
+      if (inv.funding_amount > activeWarungProfile.available_limit) {
+        alert("Nilai pembiayaan melebihi limit tersedia warung.");
+        return inv;
+      }
+
+      const updated = { ...inv, status: "SUBMITTED" as const, row_version: inv.row_version + 1 };
+
+      setWarungProfiles(prevProfiles => prevProfiles.map(p => {
+        if (p.party_id === inv.warung_id) {
+          return { ...p, available_limit: Math.max(0, p.available_limit - inv.funding_amount) };
+        }
+        return p;
+      }));
+
+      setLedgerAccounts(prevLedgers => prevLedgers.map(acc => {
+        if (acc.account_no === "12100") {
+          return { ...acc, available_balance: acc.available_balance + inv.funding_amount };
+        }
+        return acc;
+      }));
+
+      postAuditLog("SUBMIT_INVOICE_FINANCING", "INVOICE", invoiceId, inv, updated);
+      return updated;
+    }));
   };
 
   // 2. ACTION: Supplier approves the invoice
@@ -250,10 +303,15 @@ export default function App() {
   };
 
   // 3. ACTION: Supplier rejects order
-  const handleRejectInvoice = (invoiceId: string) => {
+  const handleRejectInvoice = (invoiceId: string, reason: string) => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
-        const updated = { ...inv, status: "REJECTED" as const, row_version: inv.row_version + 1 };
+        const updated = {
+          ...inv,
+          status: "DRAFT" as const,
+          rejection_reason: reason,
+          row_version: inv.row_version + 1
+        };
         postAuditLog("SUPPLIER_REJECT_ORDER", "INVOICE", invoiceId, inv, updated);
         
         // Restore credit limit to warung
@@ -276,6 +334,18 @@ export default function App() {
       }
       return inv;
     }));
+  };
+
+  const handleDeleteDraftInvoice = (invoiceId: string) => {
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    if (!invoice || invoice.status !== "DRAFT") {
+      alert("Hanya draft pengajuan yang dapat dihapus.");
+      return;
+    }
+
+    setInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
+    setInvoiceItems(prev => prev.filter(item => item.invoice_id !== invoiceId));
+    postAuditLog("DELETE_DRAFT_INVOICE", "INVOICE", invoiceId, invoice, {});
   };
 
   // 4. ACTION: Koperasi approves risk and locks funding pool
@@ -323,10 +393,15 @@ export default function App() {
   };
 
   // 5. ACTION: Koperasi rejects funding review
-  const handleRejectFunding = (invoiceId: string) => {
+  const handleRejectFunding = (invoiceId: string, reason = "Koperasi belum dapat menyetujui pembiayaan berdasarkan saldo pool, risiko, DP, atau tenor yang diajukan.") => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
-        const updated = { ...inv, status: "REJECTED" as const, row_version: inv.row_version + 1 };
+        const updated = {
+          ...inv,
+          status: "DRAFT" as const,
+          rejection_reason: reason,
+          row_version: inv.row_version + 1
+        };
         
         // Restore credit limit to warung
         setWarungProfiles(prevP => prevP.map(p => {
@@ -376,15 +451,21 @@ export default function App() {
   };
 
   // 7. ACTION: Warung confirms receipt (Starts auto-cashout payout)
-  const handleConfirmReceipt = (invoiceId: string) => {
+  const handleConfirmReceipt = (invoiceId: string, note: string, proofUrls: string[]) => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
-        if (inv.status !== "SHIPPED" && inv.status !== "ESCROW_LOCKED") {
+        if (inv.status !== "SHIPPED") {
           alert("Barang belum berada pada status yang dapat dikonfirmasi diterima.");
           return inv;
         }
 
-        const updated = { ...inv, status: "RECEIVED_CONFIRMED" as const, row_version: inv.row_version + 1 };
+        const updated = {
+          ...inv,
+          status: "RECEIVED_CONFIRMED" as const,
+          receipt_note: note,
+          receipt_proof_urls: proofUrls,
+          row_version: inv.row_version + 1
+        };
         
         postAuditLog("WARUNG_CONFIRM_RECEIPT", "INVOICE", invoiceId, inv, updated);
         
@@ -415,15 +496,16 @@ export default function App() {
 
   // Logic Background worker payout (auto-cashout Rupiah)
   const triggerPayoutWorker = (invoiceId: string, grossAmount: number, supplierId: string) => {
-    const supplierFeeRate = supplierProfiles.find(profile => profile.party_id === supplierId)?.supplier_fee_rate || 0.015;
-    const feeAmount = calculateSupplierFee(grossAmount, supplierFeeRate);
-    const netAmount = grossAmount - feeAmount;
+    const invData = invoices.find(i => i.id === invoiceId);
+    const payoutGrossAmount = invData?.total_amount || grossAmount;
+    const feeAmount = calculateSupplierFee(payoutGrossAmount);
+    const netAmount = payoutGrossAmount - feeAmount;
 
     const newPayout: Payout = {
       id: generateId("PAY"),
       invoice_id: invoiceId,
       supplier_id: supplierId,
-      gross_amount: grossAmount,
+      gross_amount: payoutGrossAmount,
       supplier_fee_amount: feeAmount,
       net_amount: netAmount,
       status: "SUCCESS",
@@ -464,7 +546,6 @@ export default function App() {
     }));
 
     // Create flexible repayment schedule records for Warung (PRD/SRS).
-    const invData = invoices.find(i => i.id === invoiceId);
     const totalFinancing = invData ? invData.funding_amount + invData.warung_fee_amount : grossAmount;
     const schedules = createFlexibleRepaymentSchedules(invoiceId, totalFinancing, invData?.tenor_days || 30);
 
@@ -594,14 +675,15 @@ export default function App() {
   };
 
   // 9. ACTION: Warung raises dispute
-  const handleRaiseDispute = (invoiceId: string, reason: string) => {
+  const handleRaiseDispute = (invoiceId: string, reason: string, proofUrls: string[]) => {
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId) {
         const updated = {
           ...inv,
           status: "DISPUTE" as const,
           dispute_reason: reason,
-          dispute_proof_url: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=150&q=80",
+          dispute_proof_url: proofUrls[0],
+          dispute_proof_urls: proofUrls,
           row_version: inv.row_version + 1
         };
         postAuditLog("RAISE_DISPUTE_CLAIM", "INVOICE", invoiceId, inv, updated);
@@ -1024,6 +1106,9 @@ export default function App() {
                   invoiceItems={invoiceItems}
                   repaymentSchedules={repaymentSchedules}
                   onCreateInvoice={handleCreateInvoice}
+                  onUpdateDraftInvoice={handleUpdateDraftInvoice}
+                  onSubmitDraftInvoice={handleSubmitDraftInvoice}
+                  onDeleteDraftInvoice={handleDeleteDraftInvoice}
                   onConfirmReceipt={handleConfirmReceipt}
                   onPayInstallment={handlePayInstallment}
                   onRaiseDispute={handleRaiseDispute}
