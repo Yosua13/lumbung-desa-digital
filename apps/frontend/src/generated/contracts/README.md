@@ -9,8 +9,8 @@ berhasil dibuild dan dideploy:
 bash scripts/stellar/build-deploy-bindings.sh
 ```
 
-Script akan menghasilkan package binding di `packages/pool_escrow` menggunakan:
+Script akan menghasilkan package binding di `packages/stellar-bindings/pool_escrow` menggunakan:
 
 ```bash
-stellar contract bindings typescript --network testnet --id <CONTRACT_ID> --output-dir ./packages/pool_escrow --overwrite
+stellar contract bindings typescript --network testnet --id <CONTRACT_ID> --output-dir ./packages/stellar-bindings/pool_escrow --overwrite
 ```
