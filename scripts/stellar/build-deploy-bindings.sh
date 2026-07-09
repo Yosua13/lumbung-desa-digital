@@ -11,7 +11,7 @@ ENV_OUT_FILE="${ENV_OUT_FILE:-$REPO_ROOT/.env.stellar.local}"
 source "$HOME/.cargo/env" 2>/dev/null || true
 
 if ! command -v stellar >/dev/null 2>&1; then
-  echo "stellar CLI is not installed. Run: pnpm run contracts:setup:ubuntu" >&2
+  echo "stellar CLI is not installed. Run: bash scripts/stellar/setup-ubuntu.sh" >&2
   exit 1
 fi
 
@@ -62,4 +62,4 @@ echo "WASM hash: $WASM_HASH"
 echo "Contract ID: $CONTRACT_ID"
 echo "Bindings: $BINDINGS_OUT_DIR"
 echo "Env file: $ENV_OUT_FILE"
-echo "Next: pnpm add file:./packages/pool_escrow"
+echo "Next for Windows frontend only, if needed: pnpm add file:./packages/pool_escrow"
