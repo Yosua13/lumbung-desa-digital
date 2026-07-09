@@ -40,6 +40,7 @@ import {
   InvoiceItem
 } from "../types";
 import { formatRupiah, maskPII, encryptData } from "../utils";
+import { calculateInvoiceQuote, calculateWarungAdminFee } from "../domain/finance";
 
 interface WarungDashboardProps {
   activeParty: Party;
@@ -49,9 +50,12 @@ interface WarungDashboardProps {
   invoiceItems: InvoiceItem[];
   repaymentSchedules: RepaymentSchedule[];
   onCreateInvoice: (supplierId: string, items: CartItem[], dp: number, tenor: number) => void;
-  onConfirmReceipt: (invoiceId: string) => void;
+  onUpdateDraftInvoice: (invoiceId: string, supplierId: string, items: CartItem[], dp: number, tenor: number) => void;
+  onSubmitDraftInvoice: (invoiceId: string) => void;
+  onDeleteDraftInvoice: (invoiceId: string) => void;
+  onConfirmReceipt: (invoiceId: string, note: string, proofUrls: string[]) => void;
   onPayInstallment: (scheduleId: string) => void;
-  onRaiseDispute: (invoiceId: string, reason: string) => void;
+  onRaiseDispute: (invoiceId: string, reason: string, proofUrls: string[]) => void;
   onUpdateKYC: (legalName: string, ownerName: string, address: string, monthlyTurnover: number, ktpNumber: string, kycFile: File | null) => void;
   kmsKeyId: string;
 }
@@ -64,6 +68,9 @@ export default function WarungDashboard({
   invoiceItems,
   repaymentSchedules,
   onCreateInvoice,
+  onUpdateDraftInvoice,
+  onSubmitDraftInvoice,
+  onDeleteDraftInvoice,
   onConfirmReceipt,
   onPayInstallment,
   onRaiseDispute,
@@ -90,7 +97,11 @@ export default function WarungDashboard({
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedDPPercent, setSelectedDPPercent] = useState<number>(20); // default 20%
+  const [customDPAmount, setCustomDPAmount] = useState<string>("");
+  const [useCustomDP, setUseCustomDP] = useState(false);
   const [selectedTenor, setSelectedTenor] = useState<number>(30); // default 30 days
+  const [showReview, setShowReview] = useState(false);
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
 
   // Detail View Active Invoice
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -98,6 +109,10 @@ export default function WarungDashboard({
   // Dispute trigger states
   const [showDisputeForm, setShowDisputeForm] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
+  const [disputeProofFiles, setDisputeProofFiles] = useState<File[]>([]);
+  const [receiptInvoiceId, setReceiptInvoiceId] = useState<string | null>(null);
+  const [receiptNote, setReceiptNote] = useState("");
+  const [receiptProofFiles, setReceiptProofFiles] = useState<File[]>([]);
 
   // Decryption Log States (for visualized advanced encryption)
   const [revealedKtp, setRevealedKtp] = useState(false);
@@ -145,26 +160,70 @@ export default function WarungDashboard({
     setCart(cart.filter(item => item.product.id !== productId));
   };
 
+  const restoreDraftToCart = (invoice: Invoice) => {
+    const restoredItems = invoiceItems
+      .filter(item => item.invoice_id === invoice.id)
+      .map(item => {
+        const product = products.find(prod => prod.id === item.product_id);
+        return product ? { product, qty: item.qty } : null;
+      })
+      .filter((item): item is CartItem => Boolean(item));
+
+    if (restoredItems.length === 0) {
+      alert("Produk dari pengajuan ini tidak ditemukan di katalog aktif.");
+      return;
+    }
+
+    setCart(restoredItems);
+    setUseCustomDP(true);
+    setCustomDPAmount(String(invoice.down_payment_amount));
+    setSelectedTenor(invoice.tenor_days);
+    setShowReview(false);
+    setEditingDraftId(invoice.id);
+    setSelectedInvoice(null);
+    setActiveTab("katalog");
+  };
+
   // Cart math
   const cartSubtotal = cart.reduce((sum, item) => sum + (item.product.unit_price * item.qty), 0);
-  const cartDPValue = Math.round(cartSubtotal * (selectedDPPercent / 100));
-  const cartFinancingValue = cartSubtotal - cartDPValue;
-  const cartAdminFee = Math.round(cartFinancingValue * 0.03); // 3% flat admin fee
-  const cartEstimatedTotalPayment = cartFinancingValue + cartAdminFee;
+  const cartDPValue = useCustomDP
+    ? Math.max(0, Math.min(Number(customDPAmount) || 0, cartSubtotal))
+    : Math.round(cartSubtotal * (selectedDPPercent / 100));
+  const cartQuote = calculateInvoiceQuote(cart, cartDPValue);
+  const cartDPPercent = cartSubtotal > 0 ? Math.round((cartDPValue / cartSubtotal) * 1000) / 10 : 0;
+  const cartFinancingValue = cartQuote.fundingAmount;
+  const cartAdminFee = cartQuote.warungFeeAmount;
+  const cartAdminFeeRule = calculateWarungAdminFee(cartFinancingValue);
+  const cartEstimatedTotalPayment = cartQuote.estimatedRepaymentAmount;
 
-  const handleCheckout = () => {
+  const handleReviewCheckout = () => {
     if (cart.length === 0) return;
     if (cartEstimatedTotalPayment > warungProfile.available_limit) {
       alert("Pengajuan Anda melebihi sisa limit kredit aktif Anda! Silakan kurangi produk di keranjang atau bayar tagihan aktif terlebih dahulu.");
       return;
     }
-    
-    onCreateInvoice(cart[0].product.supplier_id, cart, cartDPValue, selectedTenor);
+    handleCheckout();
+  };
+
+  const handleCheckout = () => {
+    if (cart.length === 0) return;
+
+    if (editingDraftId) {
+      onUpdateDraftInvoice(editingDraftId, cart[0].product.supplier_id, cart, cartDPValue, selectedTenor);
+    } else {
+      onCreateInvoice(cart[0].product.supplier_id, cart, cartDPValue, selectedTenor);
+    }
     setCart([]);
+    setCustomDPAmount("");
+    setUseCustomDP(false);
+    setShowReview(false);
+    setEditingDraftId(null);
     setSelectedInvoice(null);
     setActiveTab("tagihan");
-    alert("Pengajuan invoice financing berhasil dikirim! Menunggu persetujuan Supplier dan Koperasi.");
+    alert("Draft pengajuan stok tersimpan. Silakan review lalu ajukan dari menu Invoice & Cicilan.");
   };
+
+  const filesToPreviewUrls = (files: File[]) => files.map(file => URL.createObjectURL(file));
 
   // Encryption logs trigger
   const toggleKtpReveal = () => {
@@ -216,8 +275,9 @@ export default function WarungDashboard({
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+    <div className={activeTab === "profil" ? "grid grid-cols-1 lg:grid-cols-4 gap-8" : "space-y-6"}>
       {/* LEFT COLUMN: Profile and limit hub (Sticky) */}
+      {activeTab === "profil" && (
       <div className="lg:col-span-1 space-y-6">
         {/* Warung Reputation / Trust Score Card */}
         <div className="bg-[#0F1115] rounded-xl p-6 border border-[#262626] shadow-md relative overflow-hidden">
@@ -337,9 +397,10 @@ export default function WarungDashboard({
           )}
         </div>
       </div>
+      )}
 
       {/* RIGHT COLUMN: Core app interactions */}
-      <div className="lg:col-span-3 space-y-6">
+      <div className={activeTab === "profil" ? "lg:col-span-3 space-y-6" : "space-y-6"}>
         {/* Navigation Tabs */}
         {!propActiveTab && (
           <div className="flex border border-[#262626] bg-[#0F1115] p-1 rounded-xl shadow-md">
@@ -918,16 +979,19 @@ export default function WarungDashboard({
                         <div>
                           <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-1.5">
                             <span>Pilih Uang Muka (DP):</span>
-                            <span className="text-indigo-400">{selectedDPPercent}% ({formatRupiah(cartDPValue)})</span>
+                            <span className="text-indigo-400">{cartDPPercent}% ({formatRupiah(cartDPValue)})</span>
                           </div>
                           {/* preset buttons */}
                           <div className="grid grid-cols-4 gap-1.5">
                             {[0, 10, 20, 30].map(pct => (
                               <button
                                 key={pct}
-                                onClick={() => setSelectedDPPercent(pct)}
+                                onClick={() => {
+                                  setUseCustomDP(false);
+                                  setSelectedDPPercent(pct);
+                                }}
                                 className={`py-1 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
-                                  selectedDPPercent === pct
+                                  !useCustomDP && selectedDPPercent === pct
                                     ? "bg-indigo-600 border-indigo-600 text-white"
                                     : "bg-[#0F1115] border-[#262626] text-gray-300 hover:bg-[#14161C]"
                                 }`}
@@ -936,6 +1000,32 @@ export default function WarungDashboard({
                               </button>
                             ))}
                           </div>
+                          <div className="mt-2 grid grid-cols-5 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setUseCustomDP(true)}
+                              className={`col-span-2 py-2 rounded-lg text-[10px] font-bold border transition-colors ${
+                                useCustomDP ? "bg-indigo-600 border-indigo-600 text-white" : "bg-[#0F1115] border-[#262626] text-gray-300"
+                              }`}
+                            >
+                              Custom DP
+                            </button>
+                            <input
+                              type="number"
+                              min={0}
+                              max={cartSubtotal}
+                              value={customDPAmount}
+                              onChange={(e) => {
+                                setUseCustomDP(true);
+                                setCustomDPAmount(e.target.value);
+                              }}
+                              placeholder="Nominal Rp"
+                              className="col-span-3 rounded-lg bg-[#0F1115] border border-[#262626] px-3 py-2 text-[11px] text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                          <p className="text-[9px] text-gray-500 mt-1 leading-snug">
+                            DP boleh custom sesuai kemampuan kas warung, maksimal sebesar subtotal belanja.
+                          </p>
                         </div>
 
                         <div>
@@ -979,7 +1069,7 @@ export default function WarungDashboard({
                           <span className="font-bold text-indigo-400">{formatRupiah(cartFinancingValue)}</span>
                         </div>
                         <div className="flex justify-between text-gray-400 pb-1.5 border-b border-[#262626]">
-                          <span>Admin Fee Platform (3%):</span>
+                          <span>Admin Fee Platform ({cartAdminFeeRule.label}):</span>
                           <span className="font-bold text-white">+{formatRupiah(cartAdminFee)}</span>
                         </div>
                         <div className="flex justify-between text-sm pt-1.5">
@@ -988,12 +1078,12 @@ export default function WarungDashboard({
                         </div>
                       </div>
 
-                      {/* Checkout button */}
+                      {/* Save draft button */}
                       <button
-                        onClick={handleCheckout}
+                        onClick={handleReviewCheckout}
                         className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/15 transition-all cursor-pointer"
                       >
-                        <span>Ajukan Pembiayaan Invoice</span>
+                        <span>{editingDraftId ? "Simpan Perubahan Draft" : "Simpan Draft ke Invoice"}</span>
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     </div>
@@ -1120,6 +1210,7 @@ export default function WarungDashboard({
                                 <div>
                                   <h4 className="font-bold text-white text-xs">Aksi &amp; Status Terkini:</h4>
                                   <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                                    {inv.status === "DRAFT" && "Pengajuan belum diajukan. Anda dapat memperbaiki isi keranjang, mengubah DP, lalu mengajukan ulang."}
                                     {inv.status === "SUBMITTED" && "Menunggu Supplier menyetujui pesanan Anda, memeriksa stok barang, dan memicu kalkulasi rate lock."}
                                     {inv.status === "ESCROW_LOCKED" && "Koperasi telah menyetujui pendanaan dan mengunci dana di escrow Soroban. Supplier sedang mempersiapkan pengiriman."}
                                     {inv.status === "SHIPPED" && `Barang telah dikirim oleh Supplier. Resi: ${inv.shipping_resi || "SEDANG_DIPROSES"}. Silakan konfirmasi jika barang sudah sampai.`}
@@ -1129,16 +1220,53 @@ export default function WarungDashboard({
                                     {inv.status === "COMPLETED" && "LUNAS! Terima kasih telah menjaga reputasi tepat waktu. Skor trust Anda telah ditingkatkan."}
                                     {inv.status === "DISPUTE" && `DISPUTE AKTIF: "${inv.dispute_reason}". Pembayaran otomatis ditangguhkan, koperasi akan menengahi.`}
                                   </p>
+                                  {inv.status === "DRAFT" && inv.rejection_reason && (
+                                    <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-[11px] text-red-100">
+                                      <div className="font-extrabold text-red-300">Alasan penolakan terakhir</div>
+                                      <p className="mt-1 leading-relaxed">{inv.rejection_reason}</p>
+                                    </div>
+                                  )}
                                 </div>
 
                                 <div className="shrink-0 flex items-center gap-2">
+                                  {inv.status === "DRAFT" && (
+                                    <>
+                                      <button
+                                        onClick={() => {
+                                          onSubmitDraftInvoice(inv.id);
+                                          setSelectedInvoice(null);
+                                        }}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/10 transition-all cursor-pointer"
+                                      >
+                                        <ArrowRight className="w-4 h-4" />
+                                        <span>Ajukan</span>
+                                      </button>
+                                      <button
+                                        onClick={() => restoreDraftToCart(inv)}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/10 transition-all cursor-pointer"
+                                      >
+                                        <ShoppingCart className="w-4 h-4" />
+                                        <span>Edit Pengajuan</span>
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (confirm("Hapus draft pengajuan ini?")) {
+                                            onDeleteDraftInvoice(inv.id);
+                                            setSelectedInvoice(null);
+                                          }
+                                        }}
+                                        className="bg-[#0F1115] hover:bg-red-950/20 border border-[#262626] text-red-400 font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Batal Ajukan</span>
+                                      </button>
+                                    </>
+                                  )}
+
                                   {/* Confirm delivery action */}
-                                  {(inv.status === "SHIPPED" || inv.status === "ESCROW_LOCKED") && (
+                                  {inv.status === "SHIPPED" && (
                                     <button
-                                      onClick={() => {
-                                        onConfirmReceipt(inv.id);
-                                        setSelectedInvoice(null);
-                                      }}
+                                      onClick={() => setReceiptInvoiceId(inv.id)}
                                       className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/10 transition-all cursor-pointer"
                                     >
                                       <CheckCircle className="w-4 h-4" />
@@ -1147,7 +1275,7 @@ export default function WarungDashboard({
                                   )}
 
                                   {/* Dispute trigger action */}
-                                  {(inv.status === "SHIPPED" || inv.status === "ESCROW_LOCKED") && !showDisputeForm && (
+                                  {inv.status === "SHIPPED" && !showDisputeForm && (
                                     <button
                                       onClick={() => setShowDisputeForm(true)}
                                       className="bg-[#0F1115] hover:bg-[#14161C] border border-[#262626] text-orange-400 font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
@@ -1158,6 +1286,57 @@ export default function WarungDashboard({
                                   )}
                                 </div>
                               </div>
+
+                              {receiptInvoiceId === inv.id && (
+                                <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-xl space-y-3">
+                                  <h5 className="font-bold text-emerald-200 text-xs flex items-center gap-1.5">
+                                    <CheckCircle className="w-4.5 h-4.5" />
+                                    Konfirmasi Penerimaan Barang
+                                  </h5>
+                                  <textarea
+                                    value={receiptNote}
+                                    onChange={(e) => setReceiptNote(e.target.value)}
+                                    placeholder="Tuliskan kondisi barang saat diterima, jumlah sesuai/tidak, dan catatan singkat lain..."
+                                    className="w-full p-2.5 bg-[#14161C] border border-[#262626] text-white rounded-lg text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+                                    rows={2}
+                                  />
+                                  <input
+                                    type="file"
+                                    multiple
+                                    accept="image/*"
+                                    onChange={(e) => setReceiptProofFiles(Array.from(e.target.files || []))}
+                                    className="block w-full text-[11px] text-gray-300 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white"
+                                  />
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      onClick={() => {
+                                        setReceiptInvoiceId(null);
+                                        setReceiptNote("");
+                                        setReceiptProofFiles([]);
+                                      }}
+                                      className="px-3 py-1.5 bg-[#0F1115] hover:bg-[#14161C] border border-[#262626] rounded-lg text-[11px] font-bold text-gray-400 cursor-pointer"
+                                    >
+                                      Batal
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (!receiptNote.trim() || receiptProofFiles.length === 0) {
+                                          alert("Mohon isi catatan penerimaan dan unggah minimal satu foto bukti barang.");
+                                          return;
+                                        }
+                                        onConfirmReceipt(inv.id, receiptNote.trim(), filesToPreviewUrls(receiptProofFiles));
+                                        setReceiptInvoiceId(null);
+                                        setReceiptNote("");
+                                        setReceiptProofFiles([]);
+                                        setSelectedInvoice(null);
+                                      }}
+                                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 cursor-pointer"
+                                    >
+                                      Simpan Konfirmasi
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Dispute form */}
                               {showDisputeForm && (
@@ -1178,6 +1357,13 @@ export default function WarungDashboard({
                                       rows={2}
                                       required
                                     />
+                                    <input
+                                      type="file"
+                                      multiple
+                                      accept="image/*"
+                                      onChange={(e) => setDisputeProofFiles(Array.from(e.target.files || []))}
+                                      className="block w-full text-[11px] text-gray-300 file:mr-3 file:rounded-lg file:border-0 file:bg-orange-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white"
+                                    />
                                     <div className="flex justify-end gap-2">
                                       <button
                                         onClick={() => setShowDisputeForm(false)}
@@ -1187,12 +1373,14 @@ export default function WarungDashboard({
                                       </button>
                                       <button
                                         onClick={() => {
-                                          if (!disputeReason) {
-                                            alert("Mohon isi deskripsi masalah terlebih dahulu.");
+                                          if (!disputeReason.trim() || disputeProofFiles.length === 0) {
+                                            alert("Mohon isi deskripsi masalah dan unggah minimal satu foto bukti.");
                                             return;
                                           }
-                                          onRaiseDispute(inv.id, disputeReason);
+                                          onRaiseDispute(inv.id, disputeReason.trim(), filesToPreviewUrls(disputeProofFiles));
                                           setShowDisputeForm(false);
+                                          setDisputeReason("");
+                                          setDisputeProofFiles([]);
                                           setSelectedInvoice(null);
                                         }}
                                         className="px-4 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 cursor-pointer"
