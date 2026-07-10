@@ -69,9 +69,12 @@ export interface Product {
   unit: string; // e.g. "kg", "karton", "pcs"
   unit_price: number;
   minimum_order_qty: number;
+  stock_qty?: number;
   stock_status: "AVAILABLE" | "LIMITED" | "OUT_OF_STOCK";
   is_active: boolean;
   image_url?: string;
+  image_urls?: string[];
+  description?: string;
 }
 
 export type InvoiceStatus =
@@ -100,6 +103,9 @@ export interface Invoice {
   down_payment_amount: number;
   funding_amount: number; // total_amount - down_payment_amount
   warung_fee_amount: number; // e.g. 2-3% platform/admin fee
+  repayment_type?: "INSTALLMENT" | "BALLOON";
+  installment_count?: 1 | 2 | 3;
+  dp_paid_at?: string;
   due_date: string;
   tenor_days: number;
   status: InvoiceStatus;

@@ -1,20 +1,55 @@
+# ==========================================
+# JANGAN DI-PUSH KE REPO (Not to be pushed)
+# ==========================================
+
+# Dependencies
 node_modules/
+apps/**/node_modules/
+packages/**/node_modules/
+
+# Build Outputs & Cache
 build/
 dist/
+apps/**/dist/
+packages/**/dist/
 coverage/
 tmp/
-contracts/target/
-packages/**/node_modules/
-packages/**/dist/
-.env.stellar.local
-.DS_Store
-*.log
-.env*
-!.env.example
+.eslintcache
+.vite/
 
-# IDE & AI Studio settings
+# Rust / Soroban Contract Builds
+contracts/target/
+contracts/**/*.wasm
+
+# Generated Bindings (bisa di-generate ulang dengan npm/pnpm run build)
+packages/stellar-bindings/pool_escrow/
+apps/frontend/src/contracts/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.stellar.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS & IDE Settings
+.DS_Store
 .vscode/
+.idea/
 .antigravity/
 
-# Generated Stellar bindings
-packages/stellar-bindings/pool_escrow/
+# ==========================================
+# BOLEH DI-PUSH KE REPO (Allowed to be pushed)
+# ==========================================
+!.env.example
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json

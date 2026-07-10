@@ -33,8 +33,8 @@ import {
   LedgerAccount,
   StellarTransaction,
   AuditLog
-} from "../types";
-import { formatRupiah, maskPII, formatDateTime } from "../utils";
+} from "../../types";
+import { formatRupiah, maskPII, formatDateTime } from "../../utils";
 
 interface AdminDashboardProps {
   activeParty: Party;

@@ -38,9 +38,9 @@ import {
   CartItem,
   RepaymentSchedule,
   InvoiceItem
-} from "../types";
-import { formatRupiah, maskPII, encryptData } from "../utils";
-import { calculateInvoiceQuote, calculateWarungAdminFee } from "../domain/finance";
+} from "../../types";
+import { formatIntegerInput, formatRupiah, maskPII, parseFormattedNumber } from "../../utils";
+import { calculateInvoiceQuote, calculateWarungAdminFee } from "../../domain/finance";
 
 interface WarungDashboardProps {
   activeParty: Party;
@@ -49,9 +49,10 @@ interface WarungDashboardProps {
   invoices: Invoice[];
   invoiceItems: InvoiceItem[];
   repaymentSchedules: RepaymentSchedule[];
-  onCreateInvoice: (supplierId: string, items: CartItem[], dp: number, tenor: number) => void;
-  onUpdateDraftInvoice: (invoiceId: string, supplierId: string, items: CartItem[], dp: number, tenor: number) => void;
+  onCreateInvoice: (supplierId: string, items: CartItem[], dp: number, tenor: number, repaymentType: "INSTALLMENT" | "BALLOON", installmentCount: 1 | 2 | 3) => void;
+  onUpdateDraftInvoice: (invoiceId: string, supplierId: string, items: CartItem[], dp: number, tenor: number, repaymentType: "INSTALLMENT" | "BALLOON", installmentCount: 1 | 2 | 3) => void;
   onSubmitDraftInvoice: (invoiceId: string) => void;
+  onCancelSubmittedInvoice: (invoiceId: string) => void;
   onDeleteDraftInvoice: (invoiceId: string) => void;
   onConfirmReceipt: (invoiceId: string, note: string, proofUrls: string[]) => void;
   onPayInstallment: (scheduleId: string) => void;
@@ -70,6 +71,7 @@ export default function WarungDashboard({
   onCreateInvoice,
   onUpdateDraftInvoice,
   onSubmitDraftInvoice,
+  onCancelSubmittedInvoice,
   onDeleteDraftInvoice,
   onConfirmReceipt,
   onPayInstallment,
@@ -95,11 +97,16 @@ export default function WarungDashboard({
 
   // Catalog / Shopping Cart states
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
+  const [selectedSupplier, setSelectedSupplier] = useState<string>("All");
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [productImageIndex, setProductImageIndex] = useState(0);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedDPPercent, setSelectedDPPercent] = useState<number>(20); // default 20%
   const [customDPAmount, setCustomDPAmount] = useState<string>("");
   const [useCustomDP, setUseCustomDP] = useState(false);
   const [selectedTenor, setSelectedTenor] = useState<number>(30); // default 30 days
+  const [repaymentType, setRepaymentType] = useState<"INSTALLMENT" | "BALLOON">("INSTALLMENT");
+  const [installmentCount, setInstallmentCount] = useState<1 | 2 | 3>(3);
   const [showReview, setShowReview] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
 
@@ -113,15 +120,24 @@ export default function WarungDashboard({
   const [receiptInvoiceId, setReceiptInvoiceId] = useState<string | null>(null);
   const [receiptNote, setReceiptNote] = useState("");
   const [receiptProofFiles, setReceiptProofFiles] = useState<File[]>([]);
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Decryption Log States (for visualized advanced encryption)
   const [revealedKtp, setRevealedKtp] = useState(false);
   const [decryptionLog, setDecryptionLog] = useState<string[]>([]);
 
   // Filtering products
-  const filteredProducts = selectedCategory === "All"
-    ? products
-    : products.filter(p => p.category === selectedCategory);
+  const filteredProducts = products.filter(p => {
+    if (!p.is_active) return false;
+    if (selectedCategory !== "All" && p.category !== selectedCategory) return false;
+    if (selectedSupplier !== "All" && p.supplier_id !== selectedSupplier) return false;
+    return true;
+  });
 
   // Group products by supplier
   const suppliersMap: Record<string, string> = {
@@ -139,9 +155,18 @@ export default function WarungDashboard({
     }
     
     const existing = cart.find(item => item.product.id === product.id);
+    const stockQty = product.stock_qty ?? (product.stock_status === "LIMITED" ? 18 : product.stock_status === "OUT_OF_STOCK" ? 0 : 120);
     if (existing) {
+      if (existing.qty + 1 > stockQty) {
+        alert("Jumlah pesanan melebihi stok tersedia supplier.");
+        return;
+      }
       setCart(cart.map(item => item.product.id === product.id ? { ...item, qty: item.qty + 1 } : item));
     } else {
+      if (product.minimum_order_qty > stockQty) {
+        alert("MOQ produk lebih besar dari stok tersedia supplier.");
+        return;
+      }
       setCart([...cart, { product, qty: product.minimum_order_qty }]);
     }
   };
@@ -150,7 +175,8 @@ export default function WarungDashboard({
     setCart(cart.map(item => {
       if (item.product.id === productId) {
         const newQty = item.qty + delta;
-        return newQty >= item.product.minimum_order_qty ? { ...item, qty: newQty } : item;
+        const maxQty = item.product.stock_qty ?? (item.product.stock_status === "LIMITED" ? 18 : item.product.stock_status === "OUT_OF_STOCK" ? 0 : 120);
+        return newQty >= item.product.minimum_order_qty && newQty <= maxQty ? { ...item, qty: newQty } : item;
       }
       return item;
     }).filter(item => item.qty > 0));
@@ -178,6 +204,8 @@ export default function WarungDashboard({
     setUseCustomDP(true);
     setCustomDPAmount(String(invoice.down_payment_amount));
     setSelectedTenor(invoice.tenor_days);
+    setRepaymentType(invoice.repayment_type || "INSTALLMENT");
+    setInstallmentCount((invoice.installment_count || 3) as 1 | 2 | 3);
     setShowReview(false);
     setEditingDraftId(invoice.id);
     setSelectedInvoice(null);
@@ -187,7 +215,7 @@ export default function WarungDashboard({
   // Cart math
   const cartSubtotal = cart.reduce((sum, item) => sum + (item.product.unit_price * item.qty), 0);
   const cartDPValue = useCustomDP
-    ? Math.max(0, Math.min(Number(customDPAmount) || 0, cartSubtotal))
+    ? Math.max(0, Math.min(parseFormattedNumber(customDPAmount), cartSubtotal))
     : Math.round(cartSubtotal * (selectedDPPercent / 100));
   const cartQuote = calculateInvoiceQuote(cart, cartDPValue);
   const cartDPPercent = cartSubtotal > 0 ? Math.round((cartDPValue / cartSubtotal) * 1000) / 10 : 0;
@@ -209,9 +237,9 @@ export default function WarungDashboard({
     if (cart.length === 0) return;
 
     if (editingDraftId) {
-      onUpdateDraftInvoice(editingDraftId, cart[0].product.supplier_id, cart, cartDPValue, selectedTenor);
+      onUpdateDraftInvoice(editingDraftId, cart[0].product.supplier_id, cart, cartDPValue, selectedTenor, repaymentType, repaymentType === "BALLOON" ? 1 : installmentCount);
     } else {
-      onCreateInvoice(cart[0].product.supplier_id, cart, cartDPValue, selectedTenor);
+      onCreateInvoice(cart[0].product.supplier_id, cart, cartDPValue, selectedTenor, repaymentType, repaymentType === "BALLOON" ? 1 : installmentCount);
     }
     setCart([]);
     setCustomDPAmount("");
@@ -276,6 +304,29 @@ export default function WarungDashboard({
 
   return (
     <div className={activeTab === "profil" ? "grid grid-cols-1 lg:grid-cols-4 gap-8" : "space-y-6"}>
+      {confirmAction && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[#262626] bg-[#0F1115] p-6 shadow-2xl">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Konfirmasi Aksi</div>
+            <h3 className="mt-2 text-lg font-extrabold text-white">{confirmAction.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-gray-400">{confirmAction.message}</p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmAction(null)}
+                className="rounded-xl border border-[#262626] px-4 py-2 text-xs font-bold text-gray-300 hover:text-white"
+              >
+                Tutup
+              </button>
+              <button
+                onClick={confirmAction.onConfirm}
+                className="rounded-xl bg-red-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-red-700"
+              >
+                {confirmAction.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* LEFT COLUMN: Profile and limit hub (Sticky) */}
       {activeTab === "profil" && (
       <div className="lg:col-span-1 space-y-6">
@@ -817,32 +868,57 @@ export default function WarungDashboard({
               {/* Product Catalog list (Left side of grid) */}
               <div className="xl:col-span-2 space-y-6">
                 {/* Category selector filters */}
-                <div className="flex gap-2 bg-[#0F1115] p-1 rounded-xl border border-[#262626] overflow-x-auto">
-                  {["All", "Sembako", "Minuman", "Rumah Tangga"].map(cat => (
+                <div className="bg-[#0F1115] p-3 rounded-2xl border border-[#262626] space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {["All", "Sembako", "Minuman", "Rumah Tangga"].map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setSelectedCategory(cat)}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 transition-all ${
+                          selectedCategory === cat ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" : "bg-[#14161C] text-gray-400 hover:text-white border border-[#262626]"
+                        }`}
+                      >
+                        {cat === "All" ? "Semua Kategori" : cat}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2 border-t border-[#262626] pt-3">
                     <button
-                      key={cat}
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`px-4 py-2 rounded-lg text-xs font-bold shrink-0 transition-all ${
-                        selectedCategory === cat ? "bg-indigo-600 text-white" : "text-gray-400 hover:text-white hover:bg-[#14161C]"
-                      }`}
+                      onClick={() => setSelectedSupplier("All")}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold ${selectedSupplier === "All" ? "bg-emerald-600 text-white" : "bg-[#14161C] text-gray-400 border border-[#262626]"}`}
                     >
-                      {cat}
+                      Semua Supplier
                     </button>
-                  ))}
+                    {Object.entries(suppliersMap).map(([supplierId, name]) => (
+                      <button
+                        key={supplierId}
+                        onClick={() => setSelectedSupplier(supplierId)}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold ${selectedSupplier === supplierId ? "bg-emerald-600 text-white" : "bg-[#14161C] text-gray-400 border border-[#262626] hover:text-white"}`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Catalog Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredProducts.map(prod => {
                     const supplierName = suppliersMap[prod.supplier_id] || "Supplier Resmi";
-                    const isOutOfStock = prod.stock_status === "OUT_OF_STOCK";
+                    const stockQty = prod.stock_qty ?? (prod.stock_status === "LIMITED" ? 18 : prod.stock_status === "OUT_OF_STOCK" ? 0 : 120);
+                    const isOutOfStock = prod.stock_status === "OUT_OF_STOCK" || stockQty <= 0;
                     const cartItem = cart.find(item => item.product.id === prod.id);
+                    const productImages = prod.image_urls?.length ? prod.image_urls : [prod.image_url || "https://images.unsplash.com/photo-1586201375761-83865001e31c"];
 
                     return (
                       <div
                         key={prod.id}
-                        className={`bg-[#0F1115] rounded-2xl border transition-all overflow-hidden ${
-                          isOutOfStock ? "opacity-60 border-[#262626]" : "border-[#262626] hover:border-[#333]"
+                        onClick={() => {
+                          setSelectedProduct(prod);
+                          setProductImageIndex(0);
+                        }}
+                        className={`bg-[#0F1115] rounded-2xl border transition-all overflow-hidden cursor-pointer group ${
+                          isOutOfStock ? "opacity-60 border-[#262626]" : "border-[#262626] hover:border-indigo-500/40 hover:-translate-y-0.5"
                         }`}
                       >
                         <div className="flex h-36">
@@ -857,6 +933,11 @@ export default function WarungDashboard({
                             <span className="absolute top-2 left-2 bg-slate-900/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider">
                               {prod.category}
                             </span>
+                            {productImages.length > 1 && (
+                              <span className="absolute bottom-2 left-2 bg-black/70 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">
+                                {productImages.length} foto
+                              </span>
+                            )}
                           </div>
 
                           {/* Info */}
@@ -869,6 +950,10 @@ export default function WarungDashboard({
                                 {prod.name}
                               </h4>
                               <p className="text-[10px] text-gray-400 mt-1">Unit: {prod.unit} • MOQ: {prod.minimum_order_qty}</p>
+                              <div className="mt-2 flex flex-wrap gap-1.5 text-[9px] font-bold">
+                                <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-400 border border-emerald-500/20">Stok {stockQty}</span>
+                                <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-indigo-300 border border-indigo-500/20">Min {prod.minimum_order_qty}</span>
+                              </div>
                             </div>
 
                             <div className="flex items-center justify-between border-t border-[#262626] pt-2">
@@ -882,7 +967,10 @@ export default function WarungDashboard({
                                 <span className="text-[10px] font-bold text-red-500 uppercase">Habis</span>
                               ) : (
                                 <button
-                                  onClick={() => addToCart(prod)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    addToCart(prod);
+                                  }}
                                   className={`p-1.5 rounded-lg border text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                                     cartItem
                                       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
@@ -909,6 +997,78 @@ export default function WarungDashboard({
                     );
                   })}
                 </div>
+
+                {selectedProduct && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onClick={() => setSelectedProduct(null)}>
+                    <button
+                      onClick={() => setSelectedProduct(null)}
+                      className="absolute right-5 top-5 z-[60] flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-xl font-bold text-white hover:bg-black"
+                    >
+                      x
+                    </button>
+                    <div className="grid w-full max-w-6xl overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl md:grid-cols-[minmax(0,1.35fr)_420px]" onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const images = selectedProduct.image_urls?.length ? selectedProduct.image_urls : [selectedProduct.image_url || "https://images.unsplash.com/photo-1586201375761-83865001e31c"];
+                        const supplierName = suppliersMap[selectedProduct.supplier_id] || "Supplier Resmi";
+                        const stockQty = selectedProduct.stock_qty ?? (selectedProduct.stock_status === "LIMITED" ? 18 : selectedProduct.stock_status === "OUT_OF_STOCK" ? 0 : 120);
+                        return (
+                          <>
+                            <div className="relative flex min-h-[520px] items-center justify-center bg-black">
+                              <img src={images[productImageIndex]} alt={selectedProduct.name} className="max-h-[82vh] w-full object-contain" referrerPolicy="no-referrer" />
+                              {images.length > 1 && (
+                                <>
+                                  <button className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-lg font-black text-black shadow" onClick={() => setProductImageIndex((productImageIndex + images.length - 1) % images.length)}>‹</button>
+                                  <button className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-lg font-black text-black shadow" onClick={() => setProductImageIndex((productImageIndex + 1) % images.length)}>›</button>
+                                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5">
+                                    {images.map((_, index) => (
+                                      <span key={index} className={`h-1.5 rounded-full ${index === productImageIndex ? "w-5 bg-white" : "w-1.5 bg-white/50"}`} />
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                            <div className="flex max-h-[82vh] flex-col bg-white text-[#101010]">
+                              <div className="flex items-center gap-3 border-b border-gray-200 p-4">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-xs font-black text-white">
+                                  {supplierName.substring(0, 2).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="text-sm font-extrabold">{supplierName}</div>
+                                  <div className="text-xs text-gray-500">{selectedProduct.category}</div>
+                                </div>
+                              </div>
+                              <div className="flex-1 space-y-4 overflow-y-auto p-5">
+                                <h3 className="text-xl font-extrabold leading-tight">{selectedProduct.name}</h3>
+                                <p className="text-sm leading-relaxed text-gray-700">{selectedProduct.description || "Produk fast moving untuk kebutuhan stok harian warung. Informasi harga, MOQ, unit, dan stok mengikuti data supplier."}</p>
+                                <div className="grid grid-cols-2 gap-3 text-xs">
+                                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3"><div className="text-gray-500">Harga</div><strong className="text-gray-950">{formatRupiah(selectedProduct.unit_price)}</strong></div>
+                                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3"><div className="text-gray-500">Stok</div><strong className="text-emerald-700">{stockQty} {selectedProduct.unit}</strong></div>
+                                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3"><div className="text-gray-500">MOQ</div><strong className="text-gray-950">{selectedProduct.minimum_order_qty}</strong></div>
+                                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3"><div className="text-gray-500">Unit</div><strong className="text-gray-950">{selectedProduct.unit}</strong></div>
+                                </div>
+                                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                                  DP dibayar setelah barang diterima dan dikonfirmasi Warung.
+                                </div>
+                              </div>
+                              <div className="border-t border-gray-200 p-4">
+                                <button
+                                  disabled={selectedProduct.stock_status === "OUT_OF_STOCK" || stockQty <= 0}
+                                  onClick={() => {
+                                    addToCart(selectedProduct);
+                                    setSelectedProduct(null);
+                                  }}
+                                  className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-xs font-extrabold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-400"
+                                >
+                                  Tambahkan ke Keranjang
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Shopping Cart Panel (Right side of grid) */}
@@ -1011,13 +1171,12 @@ export default function WarungDashboard({
                               Custom DP
                             </button>
                             <input
-                              type="number"
-                              min={0}
-                              max={cartSubtotal}
+                              type="text"
+                              inputMode="numeric"
                               value={customDPAmount}
                               onChange={(e) => {
                                 setUseCustomDP(true);
-                                setCustomDPAmount(e.target.value);
+                                setCustomDPAmount(formatIntegerInput(e.target.value));
                               }}
                               placeholder="Nominal Rp"
                               className="col-span-3 rounded-lg bg-[#0F1115] border border-[#262626] px-3 py-2 text-[11px] text-white outline-none focus:ring-1 focus:ring-indigo-500"
@@ -1050,6 +1209,45 @@ export default function WarungDashboard({
                           </div>
                           <p className="text-[9px] text-gray-500 mt-1 leading-snug">
                             * Tenor fleksibel divalidasi oleh kebijakan risiko koperasi dan tingkat trust score Anda.
+                          </p>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-1.5">
+                            <span>Metode Pelunasan:</span>
+                            <span className="text-indigo-400">{repaymentType === "BALLOON" ? "Bayar di akhir" : `${installmentCount}x cicilan`}</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <button
+                              onClick={() => {
+                                setRepaymentType("INSTALLMENT");
+                                setInstallmentCount(2);
+                              }}
+                              className={`py-1 rounded text-[10px] font-bold border ${repaymentType === "INSTALLMENT" && installmentCount === 2 ? "bg-indigo-600 border-indigo-600 text-white" : "bg-[#0F1115] border-[#262626] text-gray-300"}`}
+                            >
+                              Cicil 2x
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRepaymentType("INSTALLMENT");
+                                setInstallmentCount(3);
+                              }}
+                              className={`py-1 rounded text-[10px] font-bold border ${repaymentType === "INSTALLMENT" && installmentCount === 3 ? "bg-indigo-600 border-indigo-600 text-white" : "bg-[#0F1115] border-[#262626] text-gray-300"}`}
+                            >
+                              Cicil 3x
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRepaymentType("BALLOON");
+                                setInstallmentCount(1);
+                              }}
+                              className={`py-1 rounded text-[10px] font-bold border ${repaymentType === "BALLOON" ? "bg-indigo-600 border-indigo-600 text-white" : "bg-[#0F1115] border-[#262626] text-gray-300"}`}
+                            >
+                              Bayar Akhir
+                            </button>
+                          </div>
+                          <p className="text-[9px] text-gray-500 mt-1 leading-snug">
+                            DP dibayar setelah supplier mengantar barang dan Warung mengonfirmasi penerimaan.
                           </p>
                         </div>
                       </div>
@@ -1211,6 +1409,7 @@ export default function WarungDashboard({
                                   <h4 className="font-bold text-white text-xs">Aksi &amp; Status Terkini:</h4>
                                   <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
                                     {inv.status === "DRAFT" && "Pengajuan belum diajukan. Anda dapat memperbaiki isi keranjang, mengubah DP, lalu mengajukan ulang."}
+                                    {inv.status === "REJECTED" && "Pengajuan ditolak atau dibatalkan. Anda dapat memuat ulang pengajuan ini ke keranjang untuk diperbaiki."}
                                     {inv.status === "SUBMITTED" && "Menunggu Supplier menyetujui pesanan Anda, memeriksa stok barang, dan memicu kalkulasi rate lock."}
                                     {inv.status === "ESCROW_LOCKED" && "Koperasi telah menyetujui pendanaan dan mengunci dana di escrow Soroban. Supplier sedang mempersiapkan pengiriman."}
                                     {inv.status === "SHIPPED" && `Barang telah dikirim oleh Supplier. Resi: ${inv.shipping_resi || "SEDANG_DIPROSES"}. Silakan konfirmasi jika barang sudah sampai.`}
@@ -1220,7 +1419,7 @@ export default function WarungDashboard({
                                     {inv.status === "COMPLETED" && "LUNAS! Terima kasih telah menjaga reputasi tepat waktu. Skor trust Anda telah ditingkatkan."}
                                     {inv.status === "DISPUTE" && `DISPUTE AKTIF: "${inv.dispute_reason}". Pembayaran otomatis ditangguhkan, koperasi akan menengahi.`}
                                   </p>
-                                  {inv.status === "DRAFT" && inv.rejection_reason && (
+                                  {["DRAFT", "REJECTED"].includes(inv.status) && inv.rejection_reason && (
                                     <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-[11px] text-red-100">
                                       <div className="font-extrabold text-red-300">Alasan penolakan terakhir</div>
                                       <p className="mt-1 leading-relaxed">{inv.rejection_reason}</p>
@@ -1229,18 +1428,20 @@ export default function WarungDashboard({
                                 </div>
 
                                 <div className="shrink-0 flex items-center gap-2">
-                                  {inv.status === "DRAFT" && (
+                                  {["DRAFT", "REJECTED"].includes(inv.status) && (
                                     <>
-                                      <button
-                                        onClick={() => {
-                                          onSubmitDraftInvoice(inv.id);
-                                          setSelectedInvoice(null);
-                                        }}
-                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/10 transition-all cursor-pointer"
-                                      >
-                                        <ArrowRight className="w-4 h-4" />
-                                        <span>Ajukan</span>
-                                      </button>
+                                      {inv.status === "DRAFT" && (
+                                        <button
+                                          onClick={() => {
+                                            onSubmitDraftInvoice(inv.id);
+                                            setSelectedInvoice(null);
+                                          }}
+                                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/10 transition-all cursor-pointer"
+                                        >
+                                          <ArrowRight className="w-4 h-4" />
+                                          <span>Ajukan</span>
+                                        </button>
+                                      )}
                                       <button
                                         onClick={() => restoreDraftToCart(inv)}
                                         className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/10 transition-all cursor-pointer"
@@ -1250,17 +1451,44 @@ export default function WarungDashboard({
                                       </button>
                                       <button
                                         onClick={() => {
-                                          if (confirm("Hapus draft pengajuan ini?")) {
-                                            onDeleteDraftInvoice(inv.id);
-                                            setSelectedInvoice(null);
-                                          }
+                                          setConfirmAction({
+                                            title: "Hapus pengajuan?",
+                                            message: "Draft atau pengajuan yang ditolak akan dihapus dari daftar invoice Warung.",
+                                            confirmLabel: "Hapus",
+                                            onConfirm: () => {
+                                              onDeleteDraftInvoice(inv.id);
+                                              setSelectedInvoice(null);
+                                              setConfirmAction(null);
+                                            }
+                                          });
                                         }}
                                         className="bg-[#0F1115] hover:bg-red-950/20 border border-[#262626] text-red-400 font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
-                                        <span>Batal Ajukan</span>
+                                        <span>Hapus</span>
                                       </button>
                                     </>
+                                  )}
+
+                                  {inv.status === "SUBMITTED" && (
+                                    <button
+                                      onClick={() => {
+                                        setConfirmAction({
+                                          title: "Batalkan pengajuan?",
+                                          message: "Pengajuan yang masih menunggu supplier akan berubah menjadi status ditolak/dibatalkan dan limit dikembalikan.",
+                                          confirmLabel: "Batal Ajukan",
+                                          onConfirm: () => {
+                                            onCancelSubmittedInvoice(inv.id);
+                                            setSelectedInvoice(null);
+                                            setConfirmAction(null);
+                                          }
+                                        });
+                                      }}
+                                      className="bg-[#0F1115] hover:bg-red-950/20 border border-[#262626] text-red-400 font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>Batal Ajukan</span>
+                                    </button>
                                   )}
 
                                   {/* Confirm delivery action */}

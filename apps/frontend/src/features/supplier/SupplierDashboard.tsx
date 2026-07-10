@@ -32,9 +32,9 @@ import {
   Invoice,
   InvoiceItem,
   Payout
-} from "../types";
-import { formatRupiah, generateId } from "../utils";
-import { calculateSupplierSuccessFee } from "../domain/finance";
+} from "../../types";
+import { formatIntegerInput, formatRupiah, generateId, parseFormattedNumber } from "../../utils";
+import { calculateSupplierSuccessFee } from "../../domain/finance";
 
 interface SupplierDashboardProps {
   activeParty: Party;
@@ -44,6 +44,8 @@ interface SupplierDashboardProps {
   invoiceItems: InvoiceItem[];
   payouts: Payout[];
   onAddProduct: (productData: Omit<Product, "id" | "supplier_id" | "is_active">) => void;
+  onUpdateProduct: (productId: string, productData: Omit<Product, "id" | "supplier_id" | "is_active">) => void;
+  onDeleteProduct: (productId: string) => void;
   onUpdateStockStatus: (productId: string, status: "AVAILABLE" | "LIMITED" | "OUT_OF_STOCK") => void;
   onApproveInvoice: (invoiceId: string) => void;
   onRejectInvoice: (invoiceId: string, reason: string) => void;
@@ -58,6 +60,8 @@ export default function SupplierDashboard({
   invoiceItems,
   payouts,
   onAddProduct,
+  onUpdateProduct,
+  onDeleteProduct,
   onUpdateStockStatus,
   onApproveInvoice,
   onRejectInvoice,
@@ -77,18 +81,24 @@ export default function SupplierDashboard({
   const [newProdPrice, setNewProdPrice] = useState("");
   const [newProdUnit, setNewProdUnit] = useState("");
   const [newProdMoq, setNewProdMoq] = useState("5");
+  const [newProdStock, setNewProdStock] = useState("50");
+  const [newProdImages, setNewProdImages] = useState("");
+  const [newProdDescription, setNewProdDescription] = useState("");
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [productErrors, setProductErrors] = useState<Record<string, string>>({});
 
   // Shipping action states
   const [shippingInvoiceId, setShippingInvoiceId] = useState<string | null>(null);
   const [shippingResi, setShippingResi] = useState("");
   const [rejectingInvoiceId, setRejectingInvoiceId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
 
   // Detailed modal/expand for invoice
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
   // Filter products belonging to this supplier
-  const myProducts = products.filter(p => p.supplier_id === activeParty.id);
+  const myProducts = products.filter(p => p.supplier_id === activeParty.id && p.is_active);
 
   // Filter invoices/orders submitted to this supplier
   const myInvoices = invoices.filter(inv => inv.supplier_id === activeParty.id);
@@ -103,27 +113,63 @@ export default function SupplierDashboard({
 
   const handleCreateProductSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProdName || !newProdPrice || !newProdUnit) {
-      alert("Mohon isi seluruh data produk.");
+    const errors: Record<string, string> = {};
+    if (!newProdName.trim()) errors.name = "Nama produk wajib diisi.";
+    if (!newProdPrice || parseFormattedNumber(newProdPrice) <= 0) errors.price = "Harga wajib diisi dan lebih dari 0.";
+    if (!newProdUnit.trim()) errors.unit = "Unit/kemasan wajib diisi.";
+    if (!newProdMoq || Number(newProdMoq) <= 0) errors.moq = "MOQ wajib diisi.";
+    if (!newProdStock || Number(newProdStock) < 0) errors.stock = "Stok tersedia wajib diisi.";
+    setProductErrors(errors);
+    if (Object.keys(errors).length > 0) {
       return;
     }
 
-    onAddProduct({
+    const imageUrls = newProdImages.split(/\n|,/).map(url => url.trim()).filter(Boolean);
+    const payload = {
       name: newProdName,
       category: newProdCat,
-      unit_price: Number(newProdPrice),
+      unit_price: parseFormattedNumber(newProdPrice),
       unit: newProdUnit,
       minimum_order_qty: Number(newProdMoq),
-      stock_status: "AVAILABLE"
-    });
+      stock_qty: Number(newProdStock),
+      stock_status: Number(newProdStock) === 0 ? "OUT_OF_STOCK" as const : Number(newProdStock) <= Number(newProdMoq) ? "LIMITED" as const : "AVAILABLE" as const,
+      image_url: imageUrls[0],
+      image_urls: imageUrls,
+      description: newProdDescription
+    };
+
+    if (editingProductId) {
+      onUpdateProduct(editingProductId, payload);
+    } else {
+      onAddProduct(payload);
+    }
 
     // Reset Form
     setNewProdName("");
     setNewProdPrice("");
     setNewProdUnit("");
     setNewProdMoq("5");
+    setNewProdStock("50");
+    setNewProdImages("");
+    setNewProdDescription("");
+    setEditingProductId(null);
+    setProductErrors({});
     setShowAddForm(false);
-    alert("Produk baru berhasil ditambahkan ke katalog retail!");
+    alert(editingProductId ? "Produk berhasil diperbarui." : "Produk baru berhasil ditambahkan ke katalog retail!");
+  };
+
+  const startEditProduct = (product: Product) => {
+    setEditingProductId(product.id);
+    setNewProdName(product.name);
+    setNewProdCat(product.category);
+    setNewProdPrice(formatIntegerInput(product.unit_price));
+    setNewProdUnit(product.unit);
+    setNewProdMoq(String(product.minimum_order_qty));
+    setNewProdStock(String(product.stock_qty ?? 0));
+    setNewProdImages((product.image_urls?.length ? product.image_urls : product.image_url ? [product.image_url] : []).join("\n"));
+    setNewProdDescription(product.description || "");
+    setProductErrors({});
+    setShowAddForm(true);
   };
 
   const handleShipSubmit = (e: React.FormEvent) => {
@@ -151,6 +197,31 @@ export default function SupplierDashboard({
 
   return (
     <div className="space-y-6">
+      {deleteProductId && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[#262626] bg-[#0F1115] p-6 shadow-2xl">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-red-400">Konfirmasi Produk</div>
+            <h3 className="mt-2 text-lg font-extrabold text-white">Hapus produk dari katalog?</h3>
+            <p className="mt-2 text-sm leading-relaxed text-gray-400">
+              Produk tidak akan tampil lagi di katalog Warung, tetapi audit trail tetap tersimpan.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setDeleteProductId(null)} className="rounded-xl border border-[#262626] px-4 py-2 text-xs font-bold text-gray-300 hover:text-white">
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  onDeleteProduct(deleteProductId);
+                  setDeleteProductId(null);
+                }}
+                className="rounded-xl bg-red-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-red-700"
+              >
+                Hapus Produk
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* TOP ROW: Supplier metrics summary cards */}
       {activeTab === "dashboard" && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -324,11 +395,15 @@ export default function SupplierDashboard({
                               inv.status === "SUBMITTED" ? "bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse" :
                               inv.status === "ESCROW_LOCKED" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
                               inv.status === "SHIPPED" ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" :
+                              inv.status === "DISPUTE" ? "bg-orange-500/10 text-orange-400 border-orange-500/20" :
+                              inv.status === "REJECTED" ? "bg-red-500/10 text-red-400 border-red-500/20" :
                               "bg-[#14161C] text-gray-400 border-[#262626]"
                             }`}>
                               {inv.status === "SUBMITTED" ? "MENUNGGU PERSETUJUAN" :
                                inv.status === "ESCROW_LOCKED" ? "DANA ESCROW TERKONFIRMASI" :
                                inv.status === "SHIPPED" ? "BARANG DALAM PENGIRIMAN" :
+                               inv.status === "DISPUTE" ? "DISPUTE WARUNG" :
+                               inv.status === "REJECTED" ? "DITOLAK / DIBATALKAN" :
                                inv.status === "RECEIVED_CONFIRMED" ? "BARANG TELAH DITERIMA" :
                                inv.status === "COMPLETED" ? "LUNAS" : inv.status
                               }
@@ -425,6 +500,26 @@ export default function SupplierDashboard({
                             </div>
                           )}
 
+                          {inv.status === "DISPUTE" && (
+                            <div className="bg-orange-500/5 p-4 rounded-lg border border-orange-500/20 space-y-3 shadow-sm">
+                              <h4 className="font-extrabold text-xs text-orange-200 flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4 text-orange-400" />
+                                Keterangan Dispute dari Warung
+                              </h4>
+                              <p className="text-xs leading-relaxed text-orange-100">{inv.dispute_reason || "Warung belum menulis detail masalah."}</p>
+                              {inv.dispute_proof_urls && inv.dispute_proof_urls.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                  {inv.dispute_proof_urls.map((url, index) => (
+                                    <img key={url} src={url} alt={`Bukti dispute ${index + 1}`} className="h-20 w-24 rounded-lg border border-orange-500/20 object-cover" />
+                                  ))}
+                                </div>
+                              )}
+                              <p className="text-[11px] text-gray-400">
+                                Alur yang disarankan: hubungi Warung, kirim barang pengganti, lalu minta koperasi melakukan arbitrase untuk melepas dana escrow jika masalah selesai.
+                              </p>
+                            </div>
+                          )}
+
                           {/* Shipping Input Box if active */}
                           {shippingInvoiceId === inv.id && (
                             <div className="bg-[#14161C] p-4 rounded-lg border border-indigo-500/20 space-y-3 shadow-sm">
@@ -485,7 +580,7 @@ export default function SupplierDashboard({
                                   <span className="font-bold text-emerald-400">{formatRupiah(inv.funding_amount)}</span>
                                 </div>
                                 {(() => {
-                                  const feeRule = calculateSupplierSuccessFee(inv.total_amount);
+                                  const feeRule = calculateSupplierSuccessFee(inv.funding_amount);
                                   return (
                                     <>
                                       <div className="flex justify-between text-[11px]">
@@ -539,7 +634,7 @@ export default function SupplierDashboard({
                 animate={{ opacity: 1, height: "auto" }}
                 className="bg-[#0F1115] p-5 rounded-2xl border border-[#262626] shadow-md space-y-4 overflow-hidden"
               >
-                <h4 className="font-bold text-white text-xs">Form Penambahan Katalog Sembako / Minuman</h4>
+                <h4 className="font-bold text-white text-xs">{editingProductId ? "Form Edit Produk Katalog" : "Form Penambahan Katalog Sembako / Minuman"}</h4>
                 <form onSubmit={handleCreateProductSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nama Produk Dagangan</label>
@@ -549,8 +644,8 @@ export default function SupplierDashboard({
                       onChange={(e) => setNewProdName(e.target.value)}
                       placeholder="Contoh: Beras SPHP Bulog 5kg"
                       className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                      required
                     />
+                    {productErrors.name && <p className="mt-1 text-[10px] font-bold text-red-400">{productErrors.name}</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Kategori</label>
@@ -567,13 +662,14 @@ export default function SupplierDashboard({
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Harga Satuan Rupiah (Rp)</label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       value={newProdPrice}
-                      onChange={(e) => setNewProdPrice(e.target.value)}
+                      onChange={(e) => setNewProdPrice(formatIntegerInput(e.target.value))}
                       placeholder="Contoh: 15000"
                       className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                      required
                     />
+                    {productErrors.price && <p className="mt-1 text-[10px] font-bold text-red-400">{productErrors.price}</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Unit / Kemasan</label>
@@ -583,8 +679,8 @@ export default function SupplierDashboard({
                       onChange={(e) => setNewProdUnit(e.target.value)}
                       placeholder="Contoh: pcs / karton / kg"
                       className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                      required
                     />
+                    {productErrors.unit && <p className="mt-1 text-[10px] font-bold text-red-400">{productErrors.unit}</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Minimal Order (MOQ)</label>
@@ -593,13 +689,47 @@ export default function SupplierDashboard({
                       value={newProdMoq}
                       onChange={(e) => setNewProdMoq(e.target.value)}
                       className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                      required
+                    />
+                    {productErrors.moq && <p className="mt-1 text-[10px] font-bold text-red-400">{productErrors.moq}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Stok Tersedia</label>
+                    <input
+                      type="number"
+                      value={newProdStock}
+                      onChange={(e) => setNewProdStock(e.target.value)}
+                      className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    {productErrors.stock && <p className="mt-1 text-[10px] font-bold text-red-400">{productErrors.stock}</p>}
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">URL Gambar Produk</label>
+                    <textarea
+                      value={newProdImages}
+                      onChange={(e) => setNewProdImages(e.target.value)}
+                      placeholder="Satu URL per baris, bisa lebih dari satu untuk carousel"
+                      className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                      rows={2}
+                    />
+                  </div>
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Deskripsi / Catatan Produk</label>
+                    <textarea
+                      value={newProdDescription}
+                      onChange={(e) => setNewProdDescription(e.target.value)}
+                      placeholder="Contoh: stok baru, masa kedaluwarsa, ukuran kemasan, area pengiriman..."
+                      className="w-full px-3 py-2 bg-[#14161C] border border-[#262626] rounded-lg text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                      rows={2}
                     />
                   </div>
                   <div className="md:col-span-5 flex justify-end gap-2 pt-2 border-t border-[#262626]">
                     <button
                       type="button"
-                      onClick={() => setShowAddForm(false)}
+                      onClick={() => {
+                        setShowAddForm(false);
+                        setEditingProductId(null);
+                        setProductErrors({});
+                      }}
                       className="px-4 py-2 border border-[#262626] bg-[#14161C] rounded-lg text-xs font-bold text-gray-400 hover:text-white"
                     >
                       Batal
@@ -608,7 +738,7 @@ export default function SupplierDashboard({
                       type="submit"
                       className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg text-xs shadow-sm"
                     >
-                      Simpan Produk
+                      {editingProductId ? "Simpan Perubahan" : "Simpan Produk"}
                     </button>
                   </div>
                 </form>
@@ -626,13 +756,15 @@ export default function SupplierDashboard({
                       <th className="p-4">Harga Satuan</th>
                       <th className="p-4">Unit Kemasan</th>
                       <th className="p-4">Minimal Order (MOQ)</th>
+                      <th className="p-4">Stok</th>
                       <th className="p-4 text-center">Status Stok</th>
+                      <th className="p-4 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#262626] text-gray-300">
                     {myProducts.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="text-center py-8 text-gray-500 font-medium">
+                        <td colSpan={8} className="text-center py-8 text-gray-500 font-medium">
                           Belum ada produk terdaftar. Silakan buat satu sekarang.
                         </td>
                       </tr>
@@ -656,6 +788,7 @@ export default function SupplierDashboard({
                           <td className="p-4 font-extrabold text-white">{formatRupiah(prod.unit_price)}</td>
                           <td className="p-4 font-semibold text-gray-400">{prod.unit}</td>
                           <td className="p-4 font-mono font-bold text-gray-400">{prod.minimum_order_qty}</td>
+                          <td className="p-4 font-mono font-bold text-white">{prod.stock_qty ?? (prod.stock_status === "LIMITED" ? 18 : prod.stock_status === "OUT_OF_STOCK" ? 0 : 120)}</td>
                           <td className="p-4 text-center">
                             <select
                               value={prod.stock_status}
@@ -666,6 +799,22 @@ export default function SupplierDashboard({
                               <option value="LIMITED">Sisa Terbatas</option>
                               <option value="OUT_OF_STOCK">Habis (Out of Stock)</option>
                             </select>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => startEditProduct(prod)}
+                                className="rounded-lg border border-[#262626] bg-[#14161C] px-3 py-1.5 text-[11px] font-bold text-gray-300 hover:text-white"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => setDeleteProductId(prod.id)}
+                                className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[11px] font-bold text-red-400"
+                              >
+                                Hapus
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
